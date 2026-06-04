@@ -23,7 +23,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "80:80"
+      - "0:80"
     depends_on:
       - audion-server
     restart: unless-stopped
