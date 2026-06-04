@@ -10,7 +10,7 @@ pub mod events;
 
 use axum::{
     routing::{get, post, put, delete},
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::StatusCode,
     Json,
     Router,
@@ -74,6 +74,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/events", get(events::handle_events))
         .fallback_service(serve_dir)
         .layer(cors)
+        .layer(DefaultBodyLimit::max(1024 * 1024 * 1024))
         .with_state(state)
 }
 
