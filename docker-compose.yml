@@ -17,3 +17,13 @@ services:
       - AUDION_PORT=8080
       - RUST_LOG=info
     restart: unless-stopped
+
+  audion-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - audion-server
+    restart: unless-stopped
