@@ -13,7 +13,11 @@
     Volume2, 
     VolumeX,
     LogOut,
-    Menu
+    Menu,
+    Disc,
+    Users,
+    ListMusic,
+    Heart
   } from '@lucide/svelte';
 
   // Import components
@@ -24,6 +28,11 @@
   import GettingStarted from './components/GettingStarted.svelte';
   import Settings from './components/Settings.svelte';
   import Library from './components/Library.svelte';
+  import Playlists from './components/Playlists.svelte';
+  import Albums from './components/Albums.svelte';
+  import Artists from './components/Artists.svelte';
+  import Liked from './components/Liked.svelte';
+  
   import { configureUploadQueue, summarizeQueue, uploadQueue } from './stores/uploadQueue';
 
   // Authentication State
@@ -72,6 +81,54 @@
     configureUploadQueue({ token, addToast });
   });
 
+  // Global Liked Tracks State for real-time synchronization
+  let likedTrackIds = $state<number[]>([]);
+  async function fetchLikedTrackIds() {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/liked', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        likedTrackIds = data.map((t: any) => t.id);
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  async function toggleLike(trackId: number) {
+    if (!token) return;
+    const isCurrentlyLiked = likedTrackIds.includes(trackId);
+    try {
+      const method = isCurrentlyLiked ? 'DELETE' : 'POST';
+      const res = await fetch(`/api/liked/${trackId}`, {
+        method,
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        if (isCurrentlyLiked) {
+          likedTrackIds = likedTrackIds.filter(id => id !== trackId);
+          addToast('Removed from Liked Tracks', 'info');
+        } else {
+          likedTrackIds = [...likedTrackIds, trackId];
+          addToast('Added to Liked Tracks', 'success');
+        }
+      } else {
+        throw new Error();
+      }
+    } catch (err) {
+      addToast('Failed to update liked status', 'error');
+    }
+  }
+
+  $effect(() => {
+    if (token) {
+      fetchLikedTrackIds();
+    }
+  });
+
   // Audio Player State
   interface PlayingTrack {
     id: number;
@@ -85,6 +142,13 @@
   let volume = $state(0.8);
   let isMuted = $state(false);
   let audioRef = $state<HTMLAudioElement | null>(null);
+  let coverFailed = $state(false);
+
+  $effect(() => {
+    if (playingTrack) {
+      coverFailed = false;
+    }
+  });
 
   function handleLoginSuccess(newToken: string, newUsername: string) {
     token = newToken;
@@ -105,6 +169,7 @@
     }
     playingTrack = null;
     isPlaying = false;
+    likedTrackIds = [];
     addToast('Logged out successfully', 'info');
   }
 
@@ -153,6 +218,7 @@
     }
   }
 
+  // Auto-play next track if we can, or just stop
   function handleAudioEnded() {
     isPlaying = false;
     currentTime = 0;
@@ -190,25 +256,6 @@
     return `${m}:${s}`;
   }
 
-  function getActiveTabComponent() {
-    switch (activeTab) {
-      case 'dashboard':
-        return Dashboard;
-      case 'upload':
-        return Upload;
-      case 'connection':
-        return Connection;
-      case 'started':
-        return GettingStarted;
-      case 'settings':
-        return Settings;
-      case 'library':
-        return Library;
-      default:
-        return Dashboard;
-    }
-  }
-
   function getActiveTabLabel() {
     switch (activeTab) {
       case 'dashboard':
@@ -217,6 +264,14 @@
         return 'Upload Music';
       case 'library':
         return 'Library Manager';
+      case 'albums':
+        return 'Albums';
+      case 'artists':
+        return 'Artists';
+      case 'playlists':
+        return 'Playlists';
+      case 'liked':
+        return 'Liked Tracks';
       case 'connection':
         return 'API & Credentials';
       case 'started':
@@ -237,9 +292,9 @@
     <aside class="sidebar {sidebarOpen ? 'is-open' : ''}">
       <div class="brand-section">
         <div class="brand-logo">
-          <Music size={18} />
+          <Music size={16} />
         </div>
-        <span class="brand-name">Audion Server</span>
+        <span class="brand-name">Audion</span>
       </div>
 
       <nav class="nav-links">
@@ -268,6 +323,40 @@
         </button>
 
         <button 
+          onclick={() => { activeTab = 'albums'; sidebarOpen = false; }} 
+          class="nav-item {activeTab === 'albums' ? 'active' : ''}"
+        >
+          <Disc size={18} />
+          <span class="nav-text">Albums</span>
+        </button>
+
+        <button 
+          onclick={() => { activeTab = 'artists'; sidebarOpen = false; }} 
+          class="nav-item {activeTab === 'artists' ? 'active' : ''}"
+        >
+          <Users size={18} />
+          <span class="nav-text">Artists</span>
+        </button>
+
+        <button 
+          onclick={() => { activeTab = 'playlists'; sidebarOpen = false; }} 
+          class="nav-item {activeTab === 'playlists' ? 'active' : ''}"
+        >
+          <ListMusic size={18} />
+          <span class="nav-text">Playlists</span>
+        </button>
+
+        <button 
+          onclick={() => { activeTab = 'liked'; sidebarOpen = false; }} 
+          class="nav-item {activeTab === 'liked' ? 'active' : ''}"
+        >
+          <Heart size={18} />
+          <span class="nav-text">Liked Tracks</span>
+        </button>
+
+        <div style="height: 1px; background: var(--border-color); margin: 0.5rem 0;"></div>
+
+        <button 
           onclick={() => { activeTab = 'connection'; sidebarOpen = false; }} 
           class="nav-item {activeTab === 'connection' ? 'active' : ''}"
         >
@@ -293,21 +382,21 @@
       </nav>
 
       {#if uploadSummary.total > 0}
-        <div class="glass-card" style="margin: 1rem; padding: 0.9rem; display: flex; flex-direction: column; gap: 0.6rem;">
+        <div class="glass-card" style="margin: 1rem 0; padding: 0.9rem; display: flex; flex-direction: column; gap: 0.6rem;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-size: 0.85rem; font-weight: 600;">Upload Status</span>
+            <span style="font-size: 0.8rem; font-weight: 600;">Upload Status</span>
             <span style="font-size: 0.75rem; color: var(--text-secondary);">{uploadCompletion}%</span>
           </div>
-          <div style="height: 6px; background: rgba(255,255,255,0.08); border-radius: 999px; overflow: hidden;">
-            <div style="height: 100%; width: {uploadCompletion}%; background: var(--accent-gradient);"></div>
+          <div style="height: 4px; background: rgba(255,255,255,0.06); border-radius: 999px; overflow: hidden;">
+            <div style="height: 100%; width: {uploadCompletion}%; background: #ffffff;"></div>
           </div>
-          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem; font-size: 0.75rem; color: var(--text-secondary);">
-            <span>In progress: {uploadSummary.uploading}</span>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem; font-size: 0.7rem; color: var(--text-secondary);">
+            <span>Uploading: {uploadSummary.uploading}</span>
             <span>Pending: {uploadSummary.pending}</span>
-            <span>Completed: {uploadSummary.success + uploadSummary.duplicate}</span>
+            <span>Success: {uploadSummary.success}</span>
             <span>Failed: {uploadSummary.error}</span>
           </div>
-          <button onclick={() => activeTab = 'upload'} class="btn btn-secondary" style="padding: 0.4rem 0.6rem; font-size: 0.75rem;">
+          <button onclick={() => activeTab = 'upload'} class="btn btn-secondary" style="padding: 0.35rem 0.5rem; font-size: 0.75rem;">
             View Uploads
           </button>
         </div>
@@ -320,7 +409,7 @@
           </div>
           <span style="font-weight: 500;">{username}</span>
         </div>
-        <button onclick={handleLogout} class="btn btn-secondary" style="font-size: 0.85rem; padding: 0.5rem; width: 100%; display: flex; gap: 0.5rem; justify-content: center; align-items: center;">
+        <button onclick={handleLogout} class="btn btn-secondary" style="font-size: 0.8rem; padding: 0.45rem; width: 100%; display: flex; gap: 0.5rem; justify-content: center; align-items: center;">
           <LogOut size={14} /> Log Out
         </button>
       </div>
@@ -339,17 +428,62 @@
       </div>
       {#if activeTab === 'dashboard'}
         <Dashboard {token} setActiveTab={(tab) => activeTab = tab} {addToast} />
-      {:else}
-        {@const TabComponent = getActiveTabComponent()}
-        <TabComponent 
+      {:else if activeTab === 'upload'}
+        <Upload />
+      {:else if activeTab === 'library'}
+        <Library 
           {token} 
-          {username}
+          currentPlayingId={playingTrack?.id || null} 
+          {isPlaying}
+          {likedTrackIds}
+          onPlayTrack={handlePlayTrack} 
+          onToggleLike={toggleLike}
+          {addToast} 
+        />
+      {:else if activeTab === 'albums'}
+        <Albums 
+          {token} 
+          currentPlayingId={playingTrack?.id || null} 
+          {isPlaying}
+          {likedTrackIds}
+          onPlayTrack={handlePlayTrack} 
+          onToggleLike={toggleLike}
+          {addToast} 
+        />
+      {:else if activeTab === 'artists'}
+        <Artists 
+          {token} 
+          currentPlayingId={playingTrack?.id || null} 
+          {isPlaying}
+          {likedTrackIds}
+          onPlayTrack={handlePlayTrack} 
+          onToggleLike={toggleLike}
+          {addToast} 
+        />
+      {:else if activeTab === 'playlists'}
+        <Playlists 
+          {token} 
           currentPlayingId={playingTrack?.id || null} 
           {isPlaying}
           onPlayTrack={handlePlayTrack} 
-          onLogout={handleLogout}
           {addToast} 
         />
+      {:else if activeTab === 'liked'}
+        <Liked 
+          {token} 
+          currentPlayingId={playingTrack?.id || null} 
+          {isPlaying}
+          {likedTrackIds}
+          onPlayTrack={handlePlayTrack} 
+          onToggleLike={toggleLike}
+          {addToast} 
+        />
+      {:else if activeTab === 'connection'}
+        <Connection {token} {addToast} />
+      {:else if activeTab === 'started'}
+        <GettingStarted {addToast} />
+      {:else if activeTab === 'settings'}
+        <Settings {username} onLogout={handleLogout} />
       {/if}
     </main>
 
@@ -358,12 +492,28 @@
       <div class="mini-player">
         <div class="mini-player-info">
           <div class="mini-player-cover">
-            <Music size={20} style="color: var(--accent);" />
+            {#if !coverFailed}
+              <img 
+                src="/api/tracks/{playingTrack.id}/cover?token={token}" 
+                alt={playingTrack.title}
+                onerror={() => coverFailed = true}
+              />
+            {:else}
+              <Music size={18} style="color: var(--text-secondary);" />
+            {/if}
           </div>
           <div class="mini-player-text">
             <div class="mini-player-title">{playingTrack.title}</div>
             <div class="mini-player-artist">{playingTrack.artist}</div>
           </div>
+          <button 
+            onclick={() => playingTrack && toggleLike(playingTrack.id)} 
+            class="btn" 
+            style="background: transparent; border: none; padding: 0.25rem; color: {likedTrackIds.includes(playingTrack.id) ? 'var(--danger)' : 'var(--text-muted)'}; margin-left: 0.5rem;"
+            title={likedTrackIds.includes(playingTrack.id) ? 'Unlike track' : 'Like track'}
+          >
+            <Heart size={16} fill={likedTrackIds.includes(playingTrack.id) ? 'currentColor' : 'none'} />
+          </button>
         </div>
 
         <div class="mini-player-controls">
@@ -371,12 +521,12 @@
             <button 
               onclick={togglePlay} 
               class="btn" 
-              style="background: var(--accent-gradient); border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: white;"
+              style="background: #ffffff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: #000000;"
             >
               {#if isPlaying}
-                <Pause size={16} fill="currentColor" />
+                <Pause size={14} fill="currentColor" />
               {:else}
-                <Play size={16} fill="currentColor" style="margin-left: 2px;" />
+                <Play size={14} fill="currentColor" style="margin-left: 2px;" />
               {/if}
             </button>
           </div>
@@ -398,9 +548,9 @@
         <div class="mini-player-volume">
           <button onclick={toggleMute} class="btn" style="background: transparent; border: none; color: var(--text-secondary); padding: 0.25rem;">
             {#if isMuted}
-              <VolumeX size={18} />
+              <VolumeX size={16} />
             {:else}
-              <Volume2 size={18} />
+              <Volume2 size={16} />
             {/if}
           </button>
           <input 

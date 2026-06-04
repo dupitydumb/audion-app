@@ -175,7 +175,7 @@
         <span style="font-weight: 600;">Data Directory:</span>
         <code class="data-dir-code" title={stats.data_dir}>{stats.data_dir}</code>
         <button
-          onclick={() => copyDataDir(stats.data_dir)}
+          onclick={() => stats && copyDataDir(stats.data_dir)}
           class="btn btn-secondary"
           style="padding: 0.35rem 0.6rem; font-size: 0.75rem;"
           aria-label="Copy data directory"

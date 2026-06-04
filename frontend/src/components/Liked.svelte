@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Play, Pause, Trash2, Search, Music, Disc, AlertCircle, RefreshCw, Heart, Plus } from '@lucide/svelte';
+  import { Play, Pause, Music, Disc, AlertCircle, RefreshCw, Heart, Plus } from '@lucide/svelte';
 
   let { token, currentPlayingId, isPlaying, likedTrackIds, onPlayTrack, onToggleLike, addToast } = $props<{
     token: string;
@@ -26,38 +26,21 @@
     name: string;
   }
 
-  let tracks = $state<Track[]>([]);
+  let likedTracks = $state<Track[]>([]);
   let playlists = $state<Playlist[]>([]);
-  let searchQuery = $state('');
   let isLoading = $state(true);
   let openPlaylistDropdownId = $state<number | null>(null);
 
-  async function fetchTracks() {
+  async function fetchLikedTracks() {
     isLoading = true;
     try {
-      let url = '/api/tracks?limit=100';
-      if (searchQuery.trim().length > 0) {
-        url = `/api/search?q=${encodeURIComponent(searchQuery)}`;
-      }
-
-      const res = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+      const res = await fetch('/api/liked', {
+        headers: { 'Authorization': `Bearer ${token}` }
       });
-
-      if (!res.ok) {
-        throw new Error('Failed to fetch tracks');
-      }
-
-      const data = await res.json();
-      if (searchQuery.trim().length > 0) {
-        tracks = data.tracks;
-      } else {
-        tracks = data;
-      }
+      if (!res.ok) throw new Error('Failed to load liked tracks');
+      likedTracks = await res.json();
     } catch (err: any) {
-      addToast(err.message || 'Failed to load tracks', 'error');
+      addToast(err.message || 'Failed to load liked tracks', 'error');
     } finally {
       isLoading = false;
     }
@@ -77,35 +60,10 @@
     }
   }
 
-  async function handleDelete(trackId: number, title: string | null) {
-    if (!confirm(`Are you sure you want to delete "${title || 'this track'}"?`)) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/tracks/${trackId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!res.ok) {
-        throw new Error('Failed to delete track');
-      }
-
-      addToast('Track deleted successfully', 'success');
-      fetchTracks();
-    } catch (err: any) {
-      addToast(err.message || 'Delete failed', 'error');
-    }
-  }
-
-  function formatDuration(secs: number | null): string {
-    if (secs === null) return '--:--';
-    const m = Math.floor(secs / 60);
-    const s = Math.floor(secs % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
+  async function handleToggleLikeLocal(trackId: number) {
+    // Optimistic local state update first so it vanishes immediately from liked list
+    likedTracks = likedTracks.filter(t => t.id !== trackId);
+    await onToggleLike(trackId);
   }
 
   function togglePlaylistDropdown(trackId: number, event: MouseEvent) {
@@ -138,17 +96,28 @@
     openPlaylistDropdownId = null;
   }
 
-  // Handle search input with debouncing
-  let searchTimeout: number;
-  function handleSearchInput() {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-      fetchTracks();
-    }, 300) as unknown as number;
+  function formatDuration(secs: number | null): string {
+    if (secs === null) return '--:--';
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
   }
 
+  // Refresh when the list changes globally
+  $effect(() => {
+    // If the count of global likedTrackIds has changed compared to our list, refresh
+    if (token && likedTrackIds) {
+      // Check if we need to sync
+      const localIds = likedTracks.map(t => t.id);
+      const isSynced = likedTrackIds.length === localIds.length && likedTrackIds.every((id: number) => localIds.includes(id));
+      if (!isSynced && !isLoading) {
+        fetchLikedTracks();
+      }
+    }
+  });
+
   onMount(() => {
-    fetchTracks();
+    fetchLikedTracks();
     fetchPlaylists();
 
     const handleGlobalClick = () => {
@@ -162,38 +131,21 @@
 </script>
 
 <div class="page-header">
-  <h1 class="page-title">Library Manager</h1>
-  <p class="page-subtitle">Browse and manage audio files stored on the server.</p>
+  <h1 class="page-title">Liked Tracks</h1>
+  <p class="page-subtitle">Your personally favorited songs, automatically synchronized.</p>
 </div>
 
 <div class="glass-card">
-  <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; position: relative;">
-    <div style="position: relative; flex: 1; display: flex; align-items: center;">
-      <Search size={18} style="position: absolute; left: 1rem; color: var(--text-secondary);" />
-      <input 
-        type="text" 
-        class="form-input" 
-        placeholder="Search by title, artist, or album..." 
-        style="width: 100%; padding-left: 2.75rem;" 
-        bind:value={searchQuery}
-        oninput={handleSearchInput}
-      />
-    </div>
-    <button onclick={fetchTracks} class="btn btn-secondary" style="display: flex; gap: 0.5rem; align-items: center;">
-      <RefreshCw size={16} /> Refresh
-    </button>
-  </div>
-
   {#if isLoading}
     <div style="display: flex; justify-content: center; align-items: center; min-height: 200px; gap: 0.5rem; color: var(--text-secondary);">
       <RefreshCw size={20} class="animate-spin" style="animation: spin 1s linear infinite;" />
-      <span>Loading tracks...</span>
+      <span>Loading liked tracks...</span>
     </div>
-  {:else if tracks.length === 0}
+  {:else if likedTracks.length === 0}
     <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 200px; color: var(--text-secondary); gap: 0.75rem;">
-      <AlertCircle size={32} style="color: var(--text-muted); opacity: 0.8;" />
-      <span style="font-weight: 500;">No tracks found matching your search.</span>
-      <p style="font-size: 0.85rem; color: var(--text-muted);">Try uploading files to add them to your library.</p>
+      <Heart size={32} style="color: var(--text-muted); opacity: 0.8;" />
+      <span style="font-weight: 500;">No liked tracks yet.</span>
+      <p style="font-size: 0.85rem; color: var(--text-muted);">Heart your favorite songs in the Library to see them here.</p>
     </div>
   {:else}
     <div style="overflow-x: auto;">
@@ -206,11 +158,11 @@
             <th>Album</th>
             <th style="width: 80px; text-align: right;">Length</th>
             <th style="width: 60px; text-align: center;">Format</th>
-            <th style="width: 120px; text-align: center;">Actions</th>
+            <th style="width: 100px; text-align: center;">Actions</th>
           </tr>
         </thead>
         <tbody>
-          {#each tracks as track (track.id)}
+          {#each likedTracks as track (track.id)}
             <tr>
               <td>
                 <button 
@@ -258,12 +210,12 @@
               <td>
                 <div style="display: flex; justify-content: center; align-items: center; gap: 0.5rem;">
                   <button 
-                    onclick={() => onToggleLike(track.id)} 
+                    onclick={() => handleToggleLikeLocal(track.id)} 
                     class="btn" 
-                    style="background: transparent; border: none; color: {likedTrackIds.includes(track.id) ? 'var(--danger)' : 'var(--text-muted)'}; padding: 0.25rem;"
-                    title={likedTrackIds.includes(track.id) ? 'Unlike track' : 'Like track'}
+                    style="background: transparent; border: none; color: var(--danger); padding: 0.25rem;"
+                    title="Unlike track"
                   >
-                    <Heart size={16} fill={likedTrackIds.includes(track.id) ? 'currentColor' : 'none'} />
+                    <Heart size={16} fill="currentColor" />
                   </button>
 
                   <div style="position: relative;">
@@ -292,15 +244,6 @@
                       </div>
                     {/if}
                   </div>
-
-                  <button 
-                    onclick={() => handleDelete(track.id, track.title)} 
-                    class="btn" 
-                    style="background: transparent; border: none; color: var(--text-muted); padding: 0.25rem;"
-                    title="Delete track"
-                  >
-                    <Trash2 size={16} class="hover:text-red-500" style="transition: color 0.2s;" />
-                  </button>
                 </div>
               </td>
             </tr>
@@ -315,10 +258,6 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
-  }
-
-  .hover\:text-red-500:hover {
-    color: var(--danger) !important;
   }
 
   .track-thumbnail {
