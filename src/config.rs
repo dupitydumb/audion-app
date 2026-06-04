@@ -7,6 +7,7 @@ pub struct Config {
     pub jwt_secret: String,
     pub data_dir: PathBuf,
     pub port: u16,
+    pub public_dir: PathBuf,
 }
 
 impl Config {
@@ -23,12 +24,16 @@ impl Config {
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(8080);
 
+        let public_dir_str = std::env::var("AUDION_PUBLIC_DIR").unwrap_or_else(|_| "./frontend/dist".to_string());
+        let public_dir = PathBuf::from(public_dir_str);
+
         Config {
             admin_user,
             admin_password_raw,
             jwt_secret,
             data_dir,
             port,
+            public_dir,
         }
     }
 

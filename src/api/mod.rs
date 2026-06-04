@@ -10,11 +10,31 @@ pub mod events;
 
 use axum::{
     routing::{get, post, put, delete},
+    extract::State,
+    http::StatusCode,
+    Json,
     Router,
 };
 use tower_http::cors::{Any, CorsLayer};
+use serde::Serialize;
 
 use crate::state::AppState;
+use crate::auth::Claims;
+
+#[derive(Serialize)]
+struct StatsResponse {
+    total_tracks: i32,
+    total_albums: i32,
+    total_artists: i32,
+    total_size_bytes: i64,
+    data_dir: String,
+}
+
+#[derive(Serialize)]
+struct ServerInfoResponse {
+    version: &'static str,
+    server_name: &'static str,
+}
 
 pub fn create_router(state: AppState) -> Router {
     let cors = CorsLayer::new()
@@ -22,8 +42,14 @@ pub fn create_router(state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let public_dir = state.config.public_dir.clone();
+    let serve_dir = tower_http::services::ServeDir::new(&public_dir)
+        .fallback(tower_http::services::ServeFile::new(public_dir.join("index.html")));
+
     Router::new()
         .route("/api/health", get(health))
+        .route("/api/stats", get(stats))
+        .route("/api/server-info", get(server_info))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/me", get(auth::me))
         .route("/api/tracks", get(tracks::get_tracks).post(tracks::upload_track))
@@ -46,10 +72,54 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/tracks/:id/stream", get(stream::stream_track))
         .route("/api/tracks/:id/cover", get(stream::get_track_cover))
         .route("/api/events", get(events::handle_events))
+        .fallback_service(serve_dir)
         .layer(cors)
         .with_state(state)
 }
 
 async fn health() -> &'static str {
     "OK"
+}
+
+async fn stats(
+    _claims: Claims,
+    State(state): State<AppState>,
+) -> Result<Json<StatsResponse>, (StatusCode, String)> {
+    let total_tracks: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM tracks")
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let total_albums: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM albums")
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let total_artists: i32 = sqlx::query_scalar("SELECT COUNT(DISTINCT artist) FROM tracks")
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let total_size_bytes: i64 = sqlx::query_scalar::<_, Option<i64>>("SELECT SUM(size) FROM tracks")
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .unwrap_or(0);
+
+    let data_dir = state.config.data_dir.to_string_lossy().to_string();
+
+    Ok(Json(StatsResponse {
+        total_tracks,
+        total_albums,
+        total_artists,
+        total_size_bytes,
+        data_dir,
+    }))
+}
+
+async fn server_info() -> Json<ServerInfoResponse> {
+    Json(ServerInfoResponse {
+        version: env!("CARGO_PKG_VERSION"),
+        server_name: "Audion Server",
+    })
 }
