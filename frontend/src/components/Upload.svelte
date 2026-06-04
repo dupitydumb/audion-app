@@ -1,25 +1,20 @@
 <script lang="ts">
   import { Upload, FileMusic, CheckCircle2, AlertCircle, RefreshCw } from '@lucide/svelte';
+  import { addFilesToQueue, clearCompleted, summarizeQueue, uploadQueue } from '../stores/uploadQueue';
 
-  let { token, addToast } = $props<{
-    token: string;
-    addToast: (message: string, type: 'success' | 'error' | 'info') => void;
-  }>();
-
-  interface UploadItem {
-    id: number;
-    file: File;
-    progress: number;
-    status: 'pending' | 'uploading' | 'success' | 'error' | 'duplicate';
-    errorMsg?: string;
-  }
-
-  let queue = $state<UploadItem[]>([]);
   let isDragging = $state(false);
-  let isUploading = $state(false);
   let fileInputRef = $state<HTMLInputElement | null>(null);
 
-  let nextId = 0;
+  let queueSummary = $state({
+    total: 0,
+    pending: 0,
+    uploading: 0,
+    success: 0,
+    error: 0,
+    duplicate: 0
+  });
+
+  $: queueSummary = summarizeQueue($uploadQueue);
 
   function handleDragOver(e: DragEvent) {
     e.preventDefault();
@@ -43,104 +38,6 @@
     if (target.files) {
       addFilesToQueue(target.files);
     }
-  }
-
-  function addFilesToQueue(fileList: FileList) {
-    const validExtensions = ['.mp3', '.flac', '.ogg', '.wav', '.m4a'];
-    const newItems: UploadItem[] = [];
-
-    for (let i = 0; i < fileList.length; i++) {
-      const file = fileList[i];
-      const ext = '.' + file.name.split('.').pop()?.toLowerCase();
-      
-      if (!validExtensions.includes(ext)) {
-        addToast(`Unsupported file type: ${file.name}`, 'error');
-        continue;
-      }
-
-      newItems.push({
-        id: nextId++,
-        file,
-        progress: 0,
-        status: 'pending'
-      });
-    }
-
-    if (newItems.length > 0) {
-      queue = [...queue, ...newItems];
-      processQueue();
-    }
-  }
-
-  async function processQueue() {
-    if (isUploading) return;
-    
-    const pendingItem = queue.find(item => item.status === 'pending');
-    if (!pendingItem) {
-      isUploading = false;
-      return;
-    }
-
-    isUploading = true;
-    pendingItem.status = 'uploading';
-
-    try {
-      await uploadFile(pendingItem);
-    } catch (err) {
-      // Handled inside uploadFile
-    }
-
-    isUploading = false;
-    processQueue(); // Process next in line
-  }
-
-  function uploadFile(item: UploadItem): Promise<void> {
-    return new Promise((resolve) => {
-      const formData = new FormData();
-      formData.append('file', item.file);
-
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/tracks');
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-
-      xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) {
-          const percent = Math.round((e.loaded / e.total) * 100);
-          item.progress = percent;
-        }
-      });
-
-      xhr.onload = () => {
-        if (xhr.status === 201) {
-          item.status = 'success';
-          item.progress = 100;
-          addToast(`Uploaded: ${item.file.name}`, 'success');
-        } else if (xhr.status === 409) {
-          item.status = 'duplicate';
-          item.progress = 100;
-          item.errorMsg = 'Duplicate track';
-          addToast(`Duplicate skipped: ${item.file.name}`, 'info');
-        } else {
-          item.status = 'error';
-          item.errorMsg = xhr.responseText || `Error ${xhr.status}`;
-          addToast(`Failed: ${item.file.name}`, 'error');
-        }
-        resolve();
-      };
-
-      xhr.onerror = () => {
-        item.status = 'error';
-        item.errorMsg = 'Network error';
-        addToast(`Network error: ${item.file.name}`, 'error');
-        resolve();
-      };
-
-      xhr.send(formData);
-    });
-  }
-
-  function clearCompleted() {
-    queue = queue.filter(item => item.status === 'pending' || item.status === 'uploading');
   }
 
   function triggerFileInput() {
@@ -187,17 +84,22 @@
     />
   </div>
 
-  {#if queue.length > 0}
+  {#if $uploadQueue.length > 0}
     <div style="margin-top: 2rem;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h3 style="font-family: var(--font-heading); font-size: 1.1rem; font-weight: 600;">Upload Queue ({queue.length})</h3>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; gap: 1rem; flex-wrap: wrap;">
+        <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+          <h3 style="font-family: var(--font-heading); font-size: 1.1rem; font-weight: 600;">Upload Queue ({queueSummary.total})</h3>
+          <div style="font-size: 0.85rem; color: var(--text-secondary);">
+            In progress: {queueSummary.uploading} · Pending: {queueSummary.pending} · Completed: {queueSummary.success + queueSummary.duplicate} · Failed: {queueSummary.error}
+          </div>
+        </div>
         <button onclick={clearCompleted} class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">
           Clear Completed
         </button>
       </div>
 
       <div class="progress-list">
-        {#each queue as item (item.id)}
+        {#each $uploadQueue as item (item.id)}
           <div class="progress-item">
             <div class="progress-item-header">
               <div style="display: flex; align-items: center; gap: 0.5rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 70%;">

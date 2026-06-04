@@ -24,6 +24,7 @@
   import GettingStarted from './components/GettingStarted.svelte';
   import Settings from './components/Settings.svelte';
   import Library from './components/Library.svelte';
+  import { configureUploadQueue, summarizeQueue, uploadQueue } from './stores/uploadQueue';
 
   // Authentication State
   let token = $state(localStorage.getItem('audion_admin_token') || '');
@@ -50,6 +51,22 @@
       toasts = toasts.filter(t => t.id !== id);
     }, 4000);
   }
+
+  let uploadSummary = $state({
+    total: 0,
+    pending: 0,
+    uploading: 0,
+    success: 0,
+    error: 0,
+    duplicate: 0
+  });
+  let uploadCompletion = $state(0);
+
+  $: configureUploadQueue({ token, addToast });
+  $: uploadSummary = summarizeQueue($uploadQueue);
+  $: uploadCompletion = uploadSummary.total
+    ? Math.round(((uploadSummary.success + uploadSummary.duplicate + uploadSummary.error) / uploadSummary.total) * 100)
+    : 0;
 
   // Audio Player State
   interface PlayingTrack {
@@ -251,6 +268,27 @@
           <span class="nav-text">Settings</span>
         </button>
       </nav>
+
+      {#if uploadSummary.total > 0}
+        <div class="glass-card" style="margin: 1rem; padding: 0.9rem; display: flex; flex-direction: column; gap: 0.6rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.85rem; font-weight: 600;">Upload Status</span>
+            <span style="font-size: 0.75rem; color: var(--text-secondary);">{uploadCompletion}%</span>
+          </div>
+          <div style="height: 6px; background: rgba(255,255,255,0.08); border-radius: 999px; overflow: hidden;">
+            <div style="height: 100%; width: {uploadCompletion}%; background: var(--accent-gradient);"></div>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem; font-size: 0.75rem; color: var(--text-secondary);">
+            <span>In progress: {uploadSummary.uploading}</span>
+            <span>Pending: {uploadSummary.pending}</span>
+            <span>Completed: {uploadSummary.success + uploadSummary.duplicate}</span>
+            <span>Failed: {uploadSummary.error}</span>
+          </div>
+          <button onclick={() => activeTab = 'upload'} class="btn btn-secondary" style="padding: 0.4rem 0.6rem; font-size: 0.75rem;">
+            View Uploads
+          </button>
+        </div>
+      {/if}
 
       <div class="sidebar-footer">
         <div class="user-badge">
