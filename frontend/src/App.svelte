@@ -52,21 +52,25 @@
     }, 4000);
   }
 
-  let uploadSummary = $state({
-    total: 0,
-    pending: 0,
-    uploading: 0,
-    success: 0,
-    error: 0,
-    duplicate: 0
-  });
-  let uploadCompletion = $state(0);
+  let uploadSummary = $derived(summarizeQueue($uploadQueue));
+  let uploadCompletion = $derived(
+    uploadSummary.total
+      ? Math.round(((uploadSummary.success + uploadSummary.duplicate + uploadSummary.error) / uploadSummary.total) * 100)
+      : 0
+  );
 
-  $: configureUploadQueue({ token, addToast });
-  $: uploadSummary = summarizeQueue($uploadQueue);
-  $: uploadCompletion = uploadSummary.total
-    ? Math.round(((uploadSummary.success + uploadSummary.duplicate + uploadSummary.error) / uploadSummary.total) * 100)
-    : 0;
+  $effect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.setProperty(
+        '--player-height',
+        playingTrack ? '96px' : '0px'
+      );
+    }
+  });
+
+  $effect(() => {
+    configureUploadQueue({ token, addToast });
+  });
 
   // Audio Player State
   interface PlayingTrack {
@@ -204,6 +208,25 @@
         return Dashboard;
     }
   }
+
+  function getActiveTabLabel() {
+    switch (activeTab) {
+      case 'dashboard':
+        return 'Dashboard';
+      case 'upload':
+        return 'Upload Music';
+      case 'library':
+        return 'Library Manager';
+      case 'connection':
+        return 'API & Credentials';
+      case 'started':
+        return 'Getting Started';
+      case 'settings':
+        return 'Settings';
+      default:
+        return 'Dashboard';
+    }
+  }
 </script>
 
 {#if !isLoggedIn}
@@ -211,7 +234,7 @@
 {:else}
   <div class="app-container">
     <!-- Sidebar Navigation -->
-    <aside class="sidebar">
+    <aside class="sidebar {sidebarOpen ? 'is-open' : ''}">
       <div class="brand-section">
         <div class="brand-logo">
           <Music size={18} />
@@ -221,7 +244,7 @@
 
       <nav class="nav-links">
         <button 
-          onclick={() => activeTab = 'dashboard'} 
+          onclick={() => { activeTab = 'dashboard'; sidebarOpen = false; }} 
           class="nav-item {activeTab === 'dashboard' ? 'active' : ''}"
         >
           <LayoutDashboard size={18} />
@@ -229,7 +252,7 @@
         </button>
 
         <button 
-          onclick={() => activeTab = 'upload'} 
+          onclick={() => { activeTab = 'upload'; sidebarOpen = false; }} 
           class="nav-item {activeTab === 'upload' ? 'active' : ''}"
         >
           <UploadCloud size={18} />
@@ -237,7 +260,7 @@
         </button>
 
         <button 
-          onclick={() => activeTab = 'library'} 
+          onclick={() => { activeTab = 'library'; sidebarOpen = false; }} 
           class="nav-item {activeTab === 'library' ? 'active' : ''}"
         >
           <LibraryIcon size={18} />
@@ -245,7 +268,7 @@
         </button>
 
         <button 
-          onclick={() => activeTab = 'connection'} 
+          onclick={() => { activeTab = 'connection'; sidebarOpen = false; }} 
           class="nav-item {activeTab === 'connection' ? 'active' : ''}"
         >
           <KeyRound size={18} />
@@ -253,7 +276,7 @@
         </button>
 
         <button 
-          onclick={() => activeTab = 'started'} 
+          onclick={() => { activeTab = 'started'; sidebarOpen = false; }} 
           class="nav-item {activeTab === 'started' ? 'active' : ''}"
         >
           <BookOpen size={18} />
@@ -261,7 +284,7 @@
         </button>
 
         <button 
-          onclick={() => activeTab = 'settings'} 
+          onclick={() => { activeTab = 'settings'; sidebarOpen = false; }} 
           class="nav-item {activeTab === 'settings' ? 'active' : ''}"
         >
           <SettingsIcon size={18} />
@@ -303,8 +326,17 @@
       </div>
     </aside>
 
+    <div class="sidebar-overlay {sidebarOpen ? 'show' : ''}" onclick={() => sidebarOpen = false}></div>
+
     <!-- Main Content Area -->
-    <main class="main-content" style="margin-bottom: {playingTrack ? '90px' : '0'};">
+    <main class="main-content" style="margin-bottom: var(--player-height);">
+      <div class="mobile-topbar">
+        <button class="icon-button" onclick={() => sidebarOpen = !sidebarOpen} aria-label="Toggle navigation">
+          <Menu size={18} />
+        </button>
+        <span class="mobile-title">{getActiveTabLabel()}</span>
+        <div style="width: 40px;"></div>
+      </div>
       {#if activeTab === 'dashboard'}
         <Dashboard {token} setActiveTab={(tab) => activeTab = tab} {addToast} />
       {:else}
@@ -396,9 +428,9 @@
 {/if}
 
 <!-- Toast Notifications -->
-<div class="toast-container">
+<div class="toast-container" role="status" aria-live="polite" aria-atomic="false">
   {#each toasts as toast (toast.id)}
-    <div class="toast toast-{toast.type}">
+    <div class="toast toast-{toast.type}" role={toast.type === 'error' ? 'alert' : 'status'}>
       <span>{toast.message}</span>
     </div>
   {/each}

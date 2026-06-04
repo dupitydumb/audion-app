@@ -5,16 +5,7 @@
   let isDragging = $state(false);
   let fileInputRef = $state<HTMLInputElement | null>(null);
 
-  let queueSummary = $state({
-    total: 0,
-    pending: 0,
-    uploading: 0,
-    success: 0,
-    error: 0,
-    duplicate: 0
-  });
-
-  $: queueSummary = summarizeQueue($uploadQueue);
+  let queueSummary = $derived(summarizeQueue($uploadQueue));
 
   function handleDragOver(e: DragEvent) {
     e.preventDefault();
