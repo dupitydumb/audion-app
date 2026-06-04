@@ -4,6 +4,8 @@ FROM rust:1.89-slim-bookworm AS builder
 # Install system dependencies (build-essential, pkg-config, etc. if needed)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    pkg-config \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
