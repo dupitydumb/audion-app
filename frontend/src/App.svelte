@@ -165,7 +165,7 @@
   let isShuffle = $state(false);
   let repeatMode = $state<'off' | 'all' | 'one'>('off');
   let isTranscoding = $state(false);
-  let eventSource = $state<EventSource | null>(null);
+  let eventSource: EventSource | null = null;
 
   function connectSSE() {
     if (!token) return;

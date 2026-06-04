@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { Play, Pause, Music, Disc, AlertCircle, RefreshCw, Heart, Plus } from '@lucide/svelte';
 
   let { token, currentPlayingId, isPlaying, likedTrackIds, onPlayTrack, onToggleLike, addToast } = $props<{
@@ -109,10 +109,13 @@
     // If the count of global likedTrackIds has changed compared to our list, refresh
     if (token && likedTrackIds) {
       // Check if we need to sync
-      const localIds = likedTracks.map(t => t.id);
+      const currentTracks = untrack(() => likedTracks);
+      const loading = untrack(() => isLoading);
+      
+      const localIds = currentTracks.map(t => t.id);
       const isSynced = likedTrackIds.length === localIds.length && likedTrackIds.every((id: number) => localIds.includes(id));
-      if (!isSynced && !isLoading) {
-        fetchLikedTracks();
+      if (!isSynced && !loading) {
+        untrack(() => fetchLikedTracks());
       }
     }
   });
