@@ -79,8 +79,56 @@ pub async fn stream_track(
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    let full_path = state.config.data_dir.join(&path);
-    let mut file = match File::open(&full_path).await {
+    let mut stream_path = state.config.data_dir.join(&path);
+    let mut mime_type = mime_for_format(format.as_deref());
+
+    if format.as_deref().map(|f| f.to_lowercase()) == Some("flac".to_string()) && state.has_ffmpeg {
+        let cache_dir = state.config.data_dir.join("transcoded");
+        if std::fs::create_dir_all(&cache_dir).is_ok() {
+            let cache_path = cache_dir.join(format!("{}.mp3", id));
+            let mut transcode_success = cache_path.exists();
+
+            if !transcode_success {
+                tracing::info!("Transcoding FLAC track {} to MP3 on-demand...", id);
+                let temp_path = cache_dir.join(format!("{}.temp.mp3", id));
+                let status = tokio::process::Command::new("ffmpeg")
+                    .args(&[
+                        "-y",
+                        "-i", &stream_path.to_string_lossy(),
+                        "-codec:a", "libmp3lame",
+                        "-b:a", "320k",
+                        &temp_path.to_string_lossy(),
+                    ])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .await;
+
+                match status {
+                    Ok(s) if s.success() => {
+                        if tokio::fs::rename(&temp_path, &cache_path).await.is_ok() {
+                            tracing::info!("Transcoding of track {} complete.", id);
+                            transcode_success = true;
+                        } else {
+                            tracing::error!("Failed to rename temp transcoded file for track {}", id);
+                            let _ = tokio::fs::remove_file(&temp_path).await;
+                        }
+                    }
+                    _ => {
+                        tracing::error!("FFmpeg transcoding failed for track {}", id);
+                        let _ = tokio::fs::remove_file(&temp_path).await;
+                    }
+                }
+            }
+
+            if transcode_success {
+                stream_path = cache_path;
+                mime_type = "audio/mpeg";
+            }
+        }
+    }
+
+    let mut file = match File::open(&stream_path).await {
         Ok(f) => f,
         Err(_) => return StatusCode::NOT_FOUND.into_response(),
     };
@@ -89,8 +137,6 @@ pub async fn stream_track(
         Ok(m) => m.len(),
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
-
-    let mime_type = mime_for_format(format.as_deref());
 
     // Check for Range header
     let range = headers.get(header::RANGE)

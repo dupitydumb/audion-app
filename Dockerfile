@@ -33,6 +33,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     sqlite3 \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy compiled binary from builder

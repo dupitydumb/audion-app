@@ -324,6 +324,10 @@ pub async fn delete_track(
             let _ = std::fs::remove_file(full_cover_path);
         }
     }
+    let transcoded_path = state.config.data_dir.join("transcoded").join(format!("{}.mp3", id));
+    if transcoded_path.exists() {
+        let _ = std::fs::remove_file(transcoded_path);
+    }
 
     // Delete from DB
     sqlx::query("DELETE FROM tracks WHERE id = ?")
@@ -359,3 +363,29 @@ pub async fn delete_track(
     info!("Successfully deleted track id: {}", id);
     Ok(StatusCode::OK)
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LyricsResponse {
+    pub lyrics: Option<String>,
+}
+
+pub async fn get_track_lyrics(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<LyricsResponse>, (StatusCode, String)> {
+    let metadata_json: Option<String> = sqlx::query_scalar("SELECT metadata_json FROM tracks WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .flatten();
+
+    let lyrics = metadata_json.and_then(|json_str| {
+        let val: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+        val.get("Lyrics").and_then(|v| v.as_str().map(|s| s.to_string()))
+    });
+
+    Ok(Json(LyricsResponse { lyrics }))
+}
+

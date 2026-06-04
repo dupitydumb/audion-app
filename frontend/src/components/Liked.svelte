@@ -19,6 +19,7 @@
     album: string | null;
     duration: number | null;
     format: string | null;
+    bitrate: number | null;
   }
 
   interface Playlist {
@@ -166,7 +167,13 @@
             <tr>
               <td>
                 <button 
-                  onclick={() => onPlayTrack({ id: track.id, title: track.title || 'Unknown Title', artist: track.artist || 'Unknown Artist' })} 
+                  onclick={() => onPlayTrack({ 
+                    id: track.id, 
+                    title: track.title || 'Unknown Title', 
+                    artist: track.artist || 'Unknown Artist',
+                    format: track.format,
+                    bitrate: track.bitrate
+                  })} 
                   class="btn" 
                   style="background: rgba(255,255,255,0.04); border: 1px solid var(--border-color); border-radius: 50%; width: 32px; height: 32px; padding: 0; display: flex; align-items: center; justify-content: center; color: var(--text-primary);"
                 >

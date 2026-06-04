@@ -17,7 +17,11 @@
     Disc,
     Users,
     ListMusic,
-    Heart
+    Heart,
+    RefreshCw,
+    AlignLeft,
+    Maximize2,
+    Minimize2
   } from '@lucide/svelte';
 
   // Import components
@@ -134,6 +138,8 @@
     id: number;
     title: string;
     artist: string;
+    format?: string | null;
+    bitrate?: number | null;
   }
   let playingTrack = $state<PlayingTrack | null>(null);
   let isPlaying = $state(false);
@@ -143,10 +149,149 @@
   let isMuted = $state(false);
   let audioRef = $state<HTMLAudioElement | null>(null);
   let coverFailed = $state(false);
+  let isBuffering = $state(false);
+
+  // Lyrics & Fullscreen State
+  let isFullScreen = $state(false);
+  let showLyricsPanel = $state(false);
+  
+  interface LyricLine {
+    time: number;
+    text: string;
+  }
+  let lyricsLines = $state<LyricLine[]>([]);
+  let lyricsLoading = $state(false);
+  let currentLyricIndex = $state(-1);
+  let lyricsContainerRef = $state<HTMLDivElement | null>(null);
+  let fsLyricsContainerRef = $state<HTMLDivElement | null>(null);
+
+  function parseLrc(lrcText: string): LyricLine[] {
+    const lines = lrcText.split('\n');
+    const result: LyricLine[] = [];
+    const timeRegex = /\[(\d+):(\d+(?:\.\d+)?)]/;
+
+    for (const line of lines) {
+      const match = timeRegex.exec(line);
+      if (match) {
+        const minutes = parseInt(match[1], 10);
+        const seconds = parseFloat(match[2]);
+        const time = minutes * 60 + seconds;
+        const text = line.replace(timeRegex, '').trim();
+        if (!isNaN(time)) {
+          result.push({ time, text });
+        }
+      } else if (line.trim()) {
+        const isTag = line.trim().startsWith('[') && line.trim().includes(':') && !/\d/.test(line);
+        if (!isTag) {
+          result.push({ time: -1, text: line.trim() });
+        }
+      }
+    }
+
+    const timed = result.filter(r => r.time >= 0).sort((a, b) => a.time - b.time);
+    const untimed = result.filter(r => r.time < 0);
+    
+    if (timed.length > 0) {
+      return timed;
+    } else {
+      return untimed.map((u, idx) => ({ time: idx * 4, text: u.text }));
+    }
+  }
+
+  async function loadLyrics(track: PlayingTrack) {
+    lyricsLines = [];
+    lyricsLoading = true;
+    currentLyricIndex = -1;
+
+    try {
+      const res = await fetch(`/api/tracks/${track.id}/lyrics`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.lyrics) {
+          lyricsLines = parseLrc(data.lyrics);
+          lyricsLoading = false;
+          return;
+        }
+      }
+
+      const cleanArtist = track.artist.replace(/\(feat\..*?\)/i, '').trim();
+      const cleanTitle = track.title.replace(/\(feat\..*?\)/i, '').trim();
+      const lrclibUrl = `https://lrclib.net/api/get?artist=${encodeURIComponent(cleanArtist)}&track_name=${encodeURIComponent(cleanTitle)}`;
+      
+      const lrcRes = await fetch(lrclibUrl);
+      if (lrcRes.ok) {
+        const lrcData = await lrcRes.json();
+        if (lrcData.syncedLyrics) {
+          lyricsLines = parseLrc(lrcData.syncedLyrics);
+        } else if (lrcData.plainLyrics) {
+          lyricsLines = lrcData.plainLyrics.split('\n').map((line: string, idx: number) => ({
+            time: idx * 4,
+            text: line.trim()
+          }));
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load lyrics:', e);
+    } finally {
+      lyricsLoading = false;
+    }
+  }
+
+  function syncLyricsTime(time: number) {
+    if (lyricsLines.length === 0) return;
+    
+    let activeIdx = -1;
+    for (let i = 0; i < lyricsLines.length; i++) {
+      if (time >= lyricsLines[i].time) {
+        activeIdx = i;
+      } else {
+        break;
+      }
+    }
+    
+    if (activeIdx !== currentLyricIndex) {
+      currentLyricIndex = activeIdx;
+      scrollToActiveLine();
+    }
+  }
+
+  function scrollToActiveLine() {
+    if (currentLyricIndex < 0) return;
+    setTimeout(() => {
+      if (showLyricsPanel && lyricsContainerRef) {
+        const activeEl = lyricsContainerRef.querySelector('.lyric-line.active') as HTMLElement;
+        if (activeEl) {
+          const containerHeight = lyricsContainerRef.clientHeight;
+          const targetScroll = activeEl.offsetTop - containerHeight / 2 + activeEl.clientHeight / 2;
+          lyricsContainerRef.scrollTo({ top: targetScroll, behavior: 'smooth' });
+        }
+      }
+
+      if (isFullScreen && fsLyricsContainerRef) {
+        const activeEl = fsLyricsContainerRef.querySelector('.fullscreen-lyric-line.active') as HTMLElement;
+        if (activeEl) {
+          const containerHeight = fsLyricsContainerRef.clientHeight;
+          const targetScroll = activeEl.offsetTop - containerHeight / 2 + activeEl.clientHeight / 2;
+          fsLyricsContainerRef.scrollTo({ top: targetScroll, behavior: 'smooth' });
+        }
+      }
+    }, 50);
+  }
+
+  function seekToTime(time: number) {
+    if (audioRef && duration > 0) {
+      audioRef.currentTime = time;
+      currentTime = time;
+    }
+  }
 
   $effect(() => {
     if (playingTrack) {
       coverFailed = false;
+      isBuffering = true;
+      loadLyrics(playingTrack);
     }
   });
 
@@ -163,19 +308,19 @@
     username = '';
     localStorage.removeItem('audion_admin_token');
     localStorage.removeItem('audion_admin_username');
-    // Stop audio
     if (audioRef) {
       audioRef.pause();
     }
     playingTrack = null;
     isPlaying = false;
     likedTrackIds = [];
+    isFullScreen = false;
+    showLyricsPanel = false;
     addToast('Logged out successfully', 'info');
   }
 
   function handlePlayTrack(track: PlayingTrack) {
     if (playingTrack?.id === track.id) {
-      // Toggle
       if (isPlaying) {
         audioRef?.pause();
         isPlaying = false;
@@ -187,7 +332,7 @@
       playingTrack = track;
       isPlaying = true;
       currentTime = 0;
-      // Wait for audio src change
+      isBuffering = true;
       setTimeout(() => {
         audioRef?.load();
         audioRef?.play().catch(err => addToast('Playback failed', 'error'));
@@ -209,19 +354,45 @@
   function handleTimeUpdate() {
     if (audioRef) {
       currentTime = audioRef.currentTime;
+      syncLyricsTime(currentTime);
     }
   }
 
   function handleLoadedMetadata() {
     if (audioRef) {
       duration = audioRef.duration;
+      isBuffering = false;
     }
   }
 
-  // Auto-play next track if we can, or just stop
   function handleAudioEnded() {
     isPlaying = false;
     currentTime = 0;
+  }
+
+  function handleAudioError(e: Event) {
+    const target = e.currentTarget as HTMLAudioElement;
+    const error = target.error;
+    let message = 'Playback error occurred';
+    if (error) {
+      switch (error.code) {
+        case error.MEDIA_ERR_ABORTED:
+          message = 'Playback aborted by user';
+          break;
+        case error.MEDIA_ERR_NETWORK:
+          message = 'Network error during playback';
+          break;
+        case error.MEDIA_ERR_DECODE:
+          message = 'Audio decoding failed (corrupt file or codec issue)';
+          break;
+        case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+          message = 'Audio format (like FLAC) is not supported by your browser';
+          break;
+      }
+    }
+    addToast(message, 'error');
+    isPlaying = false;
+    isBuffering = false;
   }
 
   function handleVolumeChange(e: Event) {
@@ -287,7 +458,7 @@
 {#if !isLoggedIn}
   <Login onLoginSuccess={handleLoginSuccess} {addToast} />
 {:else}
-  <div class="app-container">
+  <div class="app-container" class:layout-with-lyrics={showLyricsPanel}>
     <!-- Sidebar Navigation -->
     <aside class="sidebar {sidebarOpen ? 'is-open' : ''}">
       <div class="brand-section">
@@ -504,7 +675,17 @@
           </div>
           <div class="mini-player-text">
             <div class="mini-player-title">{playingTrack.title}</div>
-            <div class="mini-player-artist">{playingTrack.artist}</div>
+            <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: var(--text-secondary);">
+              <span>{playingTrack.artist}</span>
+              {#if playingTrack.format}
+                <span style="font-size: 0.65rem; text-transform: uppercase; background: rgba(255,255,255,0.06); padding: 0.1rem 0.35rem; border-radius: 4px; border: 1px solid var(--border-color); color: var(--text-secondary); margin-left: 0.25rem; font-weight: 600; font-family: monospace;">
+                  {playingTrack.format}
+                  {#if playingTrack.bitrate}
+                    · {Math.round(playingTrack.bitrate / 1000)}k
+                  {/if}
+                </span>
+              {/if}
+            </div>
           </div>
           <button 
             onclick={() => playingTrack && toggleLike(playingTrack.id)} 
@@ -523,7 +704,9 @@
               class="btn" 
               style="background: #ffffff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: #000000;"
             >
-              {#if isPlaying}
+              {#if isBuffering}
+                <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite;" />
+              {:else if isPlaying}
                 <Pause size={14} fill="currentColor" />
               {:else}
                 <Play size={14} fill="currentColor" style="margin-left: 2px;" />
@@ -546,6 +729,24 @@
         </div>
 
         <div class="mini-player-volume">
+          <button 
+            onclick={() => showLyricsPanel = !showLyricsPanel} 
+            class="btn" 
+            style="background: transparent; border: none; color: {showLyricsPanel ? '#ffffff' : 'var(--text-secondary)'}; padding: 0.25rem; margin-right: 0.5rem; display: flex; align-items: center;"
+            title="Toggle lyrics panel"
+          >
+            <AlignLeft size={16} />
+          </button>
+
+          <button 
+            onclick={() => isFullScreen = true} 
+            class="btn" 
+            style="background: transparent; border: none; color: var(--text-secondary); padding: 0.25rem; margin-right: 0.75rem; display: flex; align-items: center;"
+            title="Enter fullscreen"
+          >
+            <Maximize2 size={16} />
+          </button>
+
           <button onclick={toggleMute} class="btn" style="background: transparent; border: none; color: var(--text-secondary); padding: 0.25rem;">
             {#if isMuted}
               <VolumeX size={16} />
@@ -570,12 +771,190 @@
           ontimeupdate={handleTimeUpdate}
           onloadedmetadata={handleLoadedMetadata}
           onended={handleAudioEnded}
+          onerror={handleAudioError}
+          onwaiting={() => isBuffering = true}
+          onplaying={() => isBuffering = false}
+          onloadeddata={() => isBuffering = false}
+          onseeked={() => isBuffering = false}
           style="display: none;"
         ></audio>
       </div>
     {/if}
+
+    <!-- Lyrics Sidebar -->
+    {#if showLyricsPanel && playingTrack}
+      <aside class="lyrics-sidebar">
+        <div class="lyrics-header">
+          <span class="lyrics-title">Lyrics</span>
+          <button 
+            onclick={() => showLyricsPanel = false} 
+            class="btn btn-secondary" 
+            style="padding: 0.25rem 0.5rem; font-size: 0.8rem;"
+          >
+            Close
+          </button>
+        </div>
+        <div class="lyrics-body" bind:this={lyricsContainerRef}>
+          {#if lyricsLoading}
+            <div class="lyrics-empty">
+              <RefreshCw size={24} class="animate-spin" style="animation: spin 1s linear infinite;" />
+              <span>Loading lyrics...</span>
+            </div>
+          {:else if lyricsLines.length > 0}
+            {#each lyricsLines as line, i}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div 
+                class="lyric-line-wrapper"
+                onclick={() => seekToTime(line.time)}
+              >
+                <div class="lyric-line" class:active={i === currentLyricIndex}>
+                  {line.text || '• • •'}
+                </div>
+              </div>
+            {/each}
+          {:else}
+            <div class="lyrics-empty">
+              <span>No lyrics found</span>
+            </div>
+          {/if}
+        </div>
+      </aside>
+    {/if}
   </div>
 {/if}
+
+<!-- Fullscreen Player Overlay -->
+{#if isFullScreen && playingTrack}
+  <div class="fullscreen-player">
+    <div class="bg-canvas">
+      <div 
+        class="bg-layer active" 
+        style="background-image: url('/api/tracks/{playingTrack.id}/cover?token={token}')"
+      ></div>
+    </div>
+    <div class="backdrop-layer"></div>
+
+    <button 
+      class="fullscreen-close-btn"
+      onclick={() => isFullScreen = false}
+      title="Exit fullscreen"
+    >
+      <Minimize2 size={20} />
+    </button>
+
+    <div class="fullscreen-content">
+      <div class="fullscreen-left">
+        <div class="fullscreen-cover">
+          {#if !coverFailed}
+            <img 
+              src="/api/tracks/{playingTrack.id}/cover?token={token}" 
+              alt={playingTrack.title}
+              onerror={() => coverFailed = true}
+            />
+          {:else}
+            <div class="fullscreen-cover-placeholder">
+              <Music size={128} />
+            </div>
+          {/if}
+        </div>
+
+        <div class="fullscreen-meta">
+          <div class="fullscreen-title">{playingTrack.title}</div>
+          <div class="fullscreen-artist">{playingTrack.artist}</div>
+        </div>
+
+        <div class="fullscreen-controls-panel">
+          <div class="fullscreen-progress-row">
+            <span class="fullscreen-time">{formatTime(currentTime)}</span>
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="fullscreen-progress-bar" onclick={handleProgressClick}>
+              <div 
+                class="fullscreen-progress-fill" 
+                style="width: {duration > 0 ? (currentTime / duration) * 100 : 0}%"
+              ></div>
+            </div>
+            <span class="fullscreen-time">{formatTime(duration)}</span>
+          </div>
+
+          <div class="fullscreen-buttons-row">
+            <button 
+              onclick={() => playingTrack && toggleLike(playingTrack.id)}
+              class="fullscreen-btn"
+              style="color: {likedTrackIds.includes(playingTrack.id) ? 'var(--danger)' : 'rgba(255,255,255,0.6)'};"
+              title="Like track"
+            >
+              <Heart size={22} fill={likedTrackIds.includes(playingTrack.id) ? 'currentColor' : 'none'} />
+            </button>
+
+            <button 
+              onclick={togglePlay}
+              class="fullscreen-btn fullscreen-btn-play"
+              title={isPlaying ? "Pause" : "Play"}
+            >
+              {#if isBuffering}
+                <RefreshCw size={22} class="animate-spin" style="animation: spin 1s linear infinite;" />
+              {:else if isPlaying}
+                <Pause size={22} fill="currentColor" />
+              {:else}
+                <Play size={22} fill="currentColor" style="margin-left: 3px;" />
+              {/if}
+            </button>
+          </div>
+
+          <div class="fullscreen-volume-row">
+            <button onclick={toggleMute} class="fullscreen-btn">
+              {#if isMuted}
+                <VolumeX size={18} />
+              {:else}
+                <Volume2 size={18} />
+              {/if}
+            </button>
+            <input 
+              type="range" 
+              min="0" 
+              max="1" 
+              step="0.01" 
+              value={volume} 
+              oninput={handleVolumeChange} 
+              class="fullscreen-volume-slider" 
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="fullscreen-right">
+        <div class="fullscreen-lyrics-container" bind:this={fsLyricsContainerRef}>
+          {#if lyricsLoading}
+            <div class="lyrics-empty">
+              <RefreshCw size={36} class="animate-spin" style="animation: spin 1s linear infinite;" />
+              <span style="font-size: 1.25rem;">Loading lyrics...</span>
+            </div>
+          {:else if lyricsLines.length > 0}
+            {#each lyricsLines as line, i}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div 
+                class="fullscreen-lyric-line-wrapper"
+                onclick={() => seekToTime(line.time)}
+              >
+                <div class="fullscreen-lyric-line" class:active={i === currentLyricIndex}>
+                  {line.text || '• • •'}
+                </div>
+              </div>
+            {/each}
+          {:else}
+            <div class="lyrics-empty">
+              <span style="font-size: 1.5rem;">No lyrics found</span>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
 
 <!-- Toast Notifications -->
 <div class="toast-container" role="status" aria-live="polite" aria-atomic="false">

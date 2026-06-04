@@ -71,6 +71,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/search", get(search::search))
         .route("/api/tracks/:id/stream", get(stream::stream_track))
         .route("/api/tracks/:id/cover", get(stream::get_track_cover))
+        .route("/api/tracks/:id/lyrics", get(tracks::get_track_lyrics))
         .route("/api/events", get(events::handle_events))
         .fallback_service(serve_dir)
         .layer(cors)
