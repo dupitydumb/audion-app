@@ -6,7 +6,7 @@
     token: string;
     currentPlayingId: number | null;
     isPlaying: boolean;
-    onPlayTrack: (track: { id: number; title: string; artist: string }) => void;
+    onPlayTrack: (track: { id: number; title: string; artist: string; format?: string | null; bitrate?: number | null }, queue?: any[]) => void;
     addToast: (message: string, type: 'success' | 'error' | 'info') => void;
   }>();
 
@@ -286,7 +286,13 @@
                       artist: track.artist || 'Unknown Artist',
                       format: track.format,
                       bitrate: track.bitrate
-                    })} 
+                    }, playlistTracks.map(t => ({
+                      id: t.id,
+                      title: t.title || 'Unknown Title',
+                      artist: t.artist || 'Unknown Artist',
+                      format: t.format,
+                      bitrate: t.bitrate
+                    })))} 
                     class="btn" 
                     style="background: rgba(255,255,255,0.04); border: 1px solid var(--border-color); border-radius: 50%; width: 32px; height: 32px; padding: 0; display: flex; align-items: center; justify-content: center; color: var(--text-primary);"
                   >

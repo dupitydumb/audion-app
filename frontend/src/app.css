@@ -1423,3 +1423,19 @@ body {
   }
 }
 
+/* Converting Active Badge styles */
+.converting-badge {
+  animation: convertingPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes convertingPulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 4px rgba(168, 85, 247, 0.4);
+  }
+  50% {
+    opacity: .7;
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.8);
+  }
+}
+

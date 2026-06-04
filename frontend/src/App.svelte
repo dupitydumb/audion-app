@@ -21,7 +21,11 @@
     RefreshCw,
     AlignLeft,
     Maximize2,
-    Minimize2
+    Minimize2,
+    Shuffle,
+    SkipBack,
+    SkipForward,
+    Repeat
   } from '@lucide/svelte';
 
   // Import components
@@ -155,6 +159,56 @@
   let isFullScreen = $state(false);
   let showLyricsPanel = $state(false);
   
+  // Playback Queue & SSE States
+  let playbackQueue = $state<PlayingTrack[]>([]);
+  let currentQueueIndex = $state(-1);
+  let isShuffle = $state(false);
+  let repeatMode = $state<'off' | 'all' | 'one'>('off');
+  let isTranscoding = $state(false);
+  let eventSource = $state<EventSource | null>(null);
+
+  function connectSSE() {
+    if (!token) return;
+    if (eventSource) {
+      eventSource.close();
+    }
+
+    const es = new EventSource(`/api/events?token=${token}`);
+    eventSource = es;
+
+    es.addEventListener('track.transcoding', (e: any) => {
+      try {
+        const data = JSON.parse(e.data);
+        const payload = data.payload;
+        if (playingTrack && payload.id === playingTrack.id) {
+          if (payload.status === 'started') {
+            isTranscoding = true;
+          } else {
+            isTranscoding = false;
+          }
+        }
+      } catch (err) {
+        // Ignore
+      }
+    });
+
+    es.onerror = () => {
+      setTimeout(connectSSE, 5000);
+    };
+  }
+
+  $effect(() => {
+    if (token) {
+      connectSSE();
+    }
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+    };
+  });
+  
   interface LyricLine {
     time: number;
     text: string;
@@ -211,25 +265,6 @@
         const data = await res.json();
         if (data.lyrics) {
           lyricsLines = parseLrc(data.lyrics);
-          lyricsLoading = false;
-          return;
-        }
-      }
-
-      const cleanArtist = track.artist.replace(/\(feat\..*?\)/i, '').trim();
-      const cleanTitle = track.title.replace(/\(feat\..*?\)/i, '').trim();
-      const lrclibUrl = `https://lrclib.net/api/get?artist=${encodeURIComponent(cleanArtist)}&track_name=${encodeURIComponent(cleanTitle)}`;
-      
-      const lrcRes = await fetch(lrclibUrl);
-      if (lrcRes.ok) {
-        const lrcData = await lrcRes.json();
-        if (lrcData.syncedLyrics) {
-          lyricsLines = parseLrc(lrcData.syncedLyrics);
-        } else if (lrcData.plainLyrics) {
-          lyricsLines = lrcData.plainLyrics.split('\n').map((line: string, idx: number) => ({
-            time: idx * 4,
-            text: line.trim()
-          }));
         }
       }
     } catch (e) {
@@ -316,10 +351,36 @@
     likedTrackIds = [];
     isFullScreen = false;
     showLyricsPanel = false;
+    playbackQueue = [];
+    currentQueueIndex = -1;
+    isTranscoding = false;
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
     addToast('Logged out successfully', 'info');
   }
 
-  function handlePlayTrack(track: PlayingTrack) {
+  function handlePlayTrack(track: PlayingTrack, queue?: PlayingTrack[]) {
+    if (queue && queue.length > 0) {
+      playbackQueue = queue;
+      const idx = queue.findIndex(t => t.id === track.id);
+      if (idx !== -1) {
+        currentQueueIndex = idx;
+      } else {
+        playbackQueue = [track];
+        currentQueueIndex = 0;
+      }
+    } else {
+      const idx = playbackQueue.findIndex(t => t.id === track.id);
+      if (idx !== -1) {
+        currentQueueIndex = idx;
+      } else {
+        playbackQueue = [track];
+        currentQueueIndex = 0;
+      }
+    }
+
     if (playingTrack?.id === track.id) {
       if (isPlaying) {
         audioRef?.pause();
@@ -333,10 +394,45 @@
       isPlaying = true;
       currentTime = 0;
       isBuffering = true;
+      isTranscoding = false;
       setTimeout(() => {
         audioRef?.load();
         audioRef?.play().catch(err => addToast('Playback failed', 'error'));
       }, 50);
+    }
+  }
+
+  function skipForward() {
+    if (playbackQueue.length === 0) return;
+    
+    let nextIdx = currentQueueIndex;
+    if (isShuffle) {
+      nextIdx = Math.floor(Math.random() * playbackQueue.length);
+    } else {
+      nextIdx = (currentQueueIndex + 1) % playbackQueue.length;
+    }
+    
+    const nextTrack = playbackQueue[nextIdx];
+    if (nextTrack) {
+      currentQueueIndex = nextIdx;
+      handlePlayTrack(nextTrack, playbackQueue);
+    }
+  }
+
+  function skipBackward() {
+    if (playbackQueue.length === 0) return;
+    
+    let prevIdx = currentQueueIndex;
+    if (isShuffle) {
+      prevIdx = Math.floor(Math.random() * playbackQueue.length);
+    } else {
+      prevIdx = (currentQueueIndex - 1 + playbackQueue.length) % playbackQueue.length;
+    }
+    
+    const prevTrack = playbackQueue[prevIdx];
+    if (prevTrack) {
+      currentQueueIndex = prevIdx;
+      handlePlayTrack(prevTrack, playbackQueue);
     }
   }
 
@@ -366,8 +462,49 @@
   }
 
   function handleAudioEnded() {
-    isPlaying = false;
-    currentTime = 0;
+    if (repeatMode === 'one') {
+      if (audioRef) {
+        audioRef.currentTime = 0;
+        audioRef.play().catch(err => addToast('Playback failed', 'error'));
+        isPlaying = true;
+      }
+    } else {
+      if (playbackQueue.length > 0) {
+        let nextIdx = currentQueueIndex;
+        if (isShuffle) {
+          nextIdx = Math.floor(Math.random() * playbackQueue.length);
+        } else {
+          nextIdx = currentQueueIndex + 1;
+        }
+        
+        if (nextIdx >= playbackQueue.length) {
+          if (repeatMode === 'all') {
+            nextIdx = 0;
+          } else {
+            isPlaying = false;
+            currentTime = 0;
+            return;
+          }
+        }
+        
+        const nextTrack = playbackQueue[nextIdx];
+        if (nextTrack) {
+          currentQueueIndex = nextIdx;
+          playingTrack = nextTrack;
+          isPlaying = true;
+          currentTime = 0;
+          isBuffering = true;
+          isTranscoding = false;
+          setTimeout(() => {
+            audioRef?.load();
+            audioRef?.play().catch(err => addToast('Playback failed', 'error'));
+          }, 50);
+        }
+      } else {
+        isPlaying = false;
+        currentTime = 0;
+      }
+    }
   }
 
   function handleAudioError(e: Event) {
@@ -685,6 +822,11 @@
                   {/if}
                 </span>
               {/if}
+              {#if isTranscoding}
+                <span class="converting-badge" style="font-size: 0.65rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 0.1rem 0.35rem; border-radius: 4px; color: rgb(216, 180, 254); font-weight: 600; display: inline-flex; align-items: center; gap: 0.25rem;">
+                  <RefreshCw size={8} class="animate-spin" style="animation: spin 1s linear infinite;" /> Converting (FFmpeg)
+                </span>
+              {/if}
             </div>
           </div>
           <button 
@@ -698,11 +840,31 @@
         </div>
 
         <div class="mini-player-controls">
-          <div class="controls-row">
+          <div class="controls-row" style="display: flex; align-items: center; gap: 0.75rem; justify-content: center;">
+            <button 
+              onclick={() => isShuffle = !isShuffle} 
+              class="btn" 
+              style="background: transparent; border: none; color: {isShuffle ? 'var(--accent)' : 'var(--text-secondary)'}; padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
+              title="Shuffle: {isShuffle ? 'On' : 'Off'}"
+            >
+              <Shuffle size={14} />
+            </button>
+
+            <button 
+              onclick={skipBackward} 
+              class="btn" 
+              style="background: transparent; border: none; color: var(--text-primary); padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
+              title="Previous"
+            >
+              <SkipBack size={14} fill="currentColor" />
+            </button>
+
             <button 
               onclick={togglePlay} 
               class="btn" 
-              style="background: #ffffff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: #000000;"
+              style="background: #ffffff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: #000000; cursor: pointer; transition: transform 0.1s;"
+              onmouseenter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
+              onmouseleave={(e) => e.currentTarget.style.transform = 'scale(1.0)'}
             >
               {#if isBuffering}
                 <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite;" />
@@ -710,6 +872,31 @@
                 <Pause size={14} fill="currentColor" />
               {:else}
                 <Play size={14} fill="currentColor" style="margin-left: 2px;" />
+              {/if}
+            </button>
+
+            <button 
+              onclick={skipForward} 
+              class="btn" 
+              style="background: transparent; border: none; color: var(--text-primary); padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
+              title="Next"
+            >
+              <SkipForward size={14} fill="currentColor" />
+            </button>
+
+            <button 
+              onclick={() => {
+                if (repeatMode === 'off') repeatMode = 'all';
+                else if (repeatMode === 'all') repeatMode = 'one';
+                else repeatMode = 'off';
+              }} 
+              class="btn" 
+              style="background: transparent; border: none; color: {repeatMode !== 'off' ? 'var(--accent)' : 'var(--text-secondary)'}; padding: 0.25rem; display: flex; align-items: center; position: relative; cursor: pointer;"
+              title="Repeat: {repeatMode}"
+            >
+              <Repeat size={14} />
+              {#if repeatMode === 'one'}
+                <span style="position: absolute; font-size: 7px; font-weight: bold; background: var(--accent); color: #000000; border-radius: 50%; width: 9px; height: 9px; display: flex; align-items: center; justify-content: center; bottom: -2px; right: -2px;">1</span>
               {/if}
             </button>
           </div>
@@ -861,7 +1048,14 @@
 
         <div class="fullscreen-meta">
           <div class="fullscreen-title">{playingTrack.title}</div>
-          <div class="fullscreen-artist">{playingTrack.artist}</div>
+          <div style="display: flex; align-items: center; gap: 0.75rem; justify-content: center; margin-top: 0.25rem;">
+            <div class="fullscreen-artist" style="margin: 0;">{playingTrack.artist}</div>
+            {#if isTranscoding}
+              <span class="converting-badge" style="font-size: 0.75rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.2); border: 1px solid rgba(168, 85, 247, 0.4); padding: 0.15rem 0.5rem; border-radius: 4px; color: rgb(216, 180, 254); font-weight: 600; display: inline-flex; align-items: center; gap: 0.35rem; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;">
+                <RefreshCw size={10} class="animate-spin" style="animation: spin 1s linear infinite;" /> Converting (FFmpeg)
+              </span>
+            {/if}
+          </div>
         </div>
 
         <div class="fullscreen-controls-panel">
@@ -878,14 +1072,22 @@
             <span class="fullscreen-time">{formatTime(duration)}</span>
           </div>
 
-          <div class="fullscreen-buttons-row">
+          <div class="fullscreen-buttons-row" style="display: flex; align-items: center; gap: 1.5rem; justify-content: center;">
             <button 
-              onclick={() => playingTrack && toggleLike(playingTrack.id)}
-              class="fullscreen-btn"
-              style="color: {likedTrackIds.includes(playingTrack.id) ? 'var(--danger)' : 'rgba(255,255,255,0.6)'};"
-              title="Like track"
+              onclick={() => isShuffle = !isShuffle} 
+              class="fullscreen-btn" 
+              style="color: {isShuffle ? 'var(--accent)' : 'rgba(255,255,255,0.6)'};"
+              title="Shuffle: {isShuffle ? 'On' : 'Off'}"
             >
-              <Heart size={22} fill={likedTrackIds.includes(playingTrack.id) ? 'currentColor' : 'none'} />
+              <Shuffle size={20} />
+            </button>
+
+            <button 
+              onclick={skipBackward} 
+              class="fullscreen-btn"
+              title="Previous"
+            >
+              <SkipBack size={22} fill="currentColor" />
             </button>
 
             <button 
@@ -900,6 +1102,39 @@
               {:else}
                 <Play size={22} fill="currentColor" style="margin-left: 3px;" />
               {/if}
+            </button>
+
+            <button 
+              onclick={skipForward} 
+              class="fullscreen-btn"
+              title="Next"
+            >
+              <SkipForward size={22} fill="currentColor" />
+            </button>
+
+            <button 
+              onclick={() => {
+                if (repeatMode === 'off') repeatMode = 'all';
+                else if (repeatMode === 'all') repeatMode = 'one';
+                else repeatMode = 'off';
+              }} 
+              class="fullscreen-btn" 
+              style="color: {repeatMode !== 'off' ? 'var(--accent)' : 'rgba(255,255,255,0.6)'}; position: relative;"
+              title="Repeat: {repeatMode}"
+            >
+              <Repeat size={20} />
+              {#if repeatMode === 'one'}
+                <span style="position: absolute; font-size: 7px; font-weight: bold; background: var(--accent); color: #000000; border-radius: 50%; width: 9px; height: 9px; display: flex; align-items: center; justify-content: center; bottom: -2px; right: -2px;">1</span>
+              {/if}
+            </button>
+
+            <button 
+              onclick={() => playingTrack && toggleLike(playingTrack.id)}
+              class="fullscreen-btn"
+              style="color: {likedTrackIds.includes(playingTrack.id) ? 'var(--danger)' : 'rgba(255,255,255,0.6)'};"
+              title="Like track"
+            >
+              <Heart size={20} fill={likedTrackIds.includes(playingTrack.id) ? 'currentColor' : 'none'} />
             </button>
           </div>
 

@@ -364,6 +364,19 @@ pub async fn delete_track(
     Ok(StatusCode::OK)
 }
 
+fn clean_metadata_string(s: &str) -> String {
+    let s_lower = s.to_lowercase();
+    if let Some(idx) = s_lower.find("(feat.") {
+        s[..idx].trim().to_string()
+    } else if let Some(idx) = s_lower.find("(feat ") {
+        s[..idx].trim().to_string()
+    } else if let Some(idx) = s_lower.find("(with ") {
+        s[..idx].trim().to_string()
+    } else {
+        s.trim().to_string()
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LyricsResponse {
     pub lyrics: Option<String>,
@@ -374,17 +387,65 @@ pub async fn get_track_lyrics(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<LyricsResponse>, (StatusCode, String)> {
-    let metadata_json: Option<String> = sqlx::query_scalar("SELECT metadata_json FROM tracks WHERE id = ?")
+    let row = sqlx::query("SELECT title, artist, duration, metadata_json FROM tracks WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .flatten();
+        .ok_or((StatusCode::NOT_FOUND, "Track not found".to_string()))?;
 
-    let lyrics = metadata_json.and_then(|json_str| {
+    let title: Option<String> = row.get("title");
+    let artist: Option<String> = row.get("artist");
+    let duration: Option<i32> = row.get("duration");
+    let metadata_json: Option<String> = row.get("metadata_json");
+
+    let mut lyrics = metadata_json.and_then(|json_str| {
         let val: serde_json::Value = serde_json::from_str(&json_str).ok()?;
         val.get("Lyrics").and_then(|v| v.as_str().map(|s| s.to_string()))
     });
+
+    if lyrics.is_none() {
+        if let (Some(artist), Some(title)) = (artist, title) {
+            let clean_artist = clean_metadata_string(&artist);
+            let clean_title = clean_metadata_string(&title);
+
+            let client = reqwest::Client::new();
+            let mut request = client.get("https://lrclib.net/api/get")
+                .query(&[("artist", &clean_artist), ("track_name", &clean_title)]);
+
+            if let Some(dur) = duration {
+                request = request.query(&[("duration", &dur.to_string())]);
+            }
+
+            let response = request.timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await;
+
+            match response {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        #[derive(Deserialize)]
+                        #[serde(rename_all = "camelCase")]
+                        struct LrcResponse {
+                            synced_lyrics: Option<String>,
+                            plain_lyrics: Option<String>,
+                        }
+
+                        if let Ok(lrc_data) = resp.json::<LrcResponse>().await {
+                            lyrics = lrc_data.synced_lyrics.or(lrc_data.plain_lyrics);
+                        }
+                    } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                        info!("No lyrics found on LRCLIB for: {} - {}", clean_artist, clean_title);
+                    } else {
+                        error!("LRCLIB API returned status: {}", resp.status());
+                    }
+                }
+                Err(err) => {
+                    error!("Failed to fetch lyrics from LRCLIB: {}", err);
+                }
+            }
+        }
+    }
 
     Ok(Json(LyricsResponse { lyrics }))
 }

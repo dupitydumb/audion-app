@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use sqlx::Row;
 use crate::state::AppState;
 use crate::auth::Claims;
+use crate::events::ServerEvent;
 
 fn parse_range(range_header: &str, file_size: u64) -> Option<(u64, u64)> {
     if !range_header.starts_with("bytes=") {
@@ -90,6 +91,15 @@ pub async fn stream_track(
 
             if !transcode_success {
                 tracing::info!("Transcoding FLAC track {} to MP3 on-demand...", id);
+
+                // Broadcast that transcoding has started
+                state.event_bus.broadcast(ServerEvent {
+                    id: 0,
+                    event_type: "track.transcoding".to_string(),
+                    payload: serde_json::json!({ "id": id, "status": "started" }),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                });
+
                 let temp_path = cache_dir.join(format!("{}.temp.mp3", id));
                 let status = tokio::process::Command::new("ffmpeg")
                     .args(&[
@@ -104,21 +114,33 @@ pub async fn stream_track(
                     .status()
                     .await;
 
-                match status {
+                let rename_success = match status {
                     Ok(s) if s.success() => {
                         if tokio::fs::rename(&temp_path, &cache_path).await.is_ok() {
                             tracing::info!("Transcoding of track {} complete.", id);
                             transcode_success = true;
+                            true
                         } else {
                             tracing::error!("Failed to rename temp transcoded file for track {}", id);
                             let _ = tokio::fs::remove_file(&temp_path).await;
+                            false
                         }
                     }
                     _ => {
                         tracing::error!("FFmpeg transcoding failed for track {}", id);
                         let _ = tokio::fs::remove_file(&temp_path).await;
+                        false
                     }
-                }
+                };
+
+                // Broadcast final transcoding status
+                let final_status = if rename_success { "complete" } else { "failed" };
+                state.event_bus.broadcast(ServerEvent {
+                    id: 0,
+                    event_type: "track.transcoding".to_string(),
+                    payload: serde_json::json!({ "id": id, "status": final_status }),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                });
             }
 
             if transcode_success {
