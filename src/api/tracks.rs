@@ -129,11 +129,20 @@ pub async fn upload_track(
     std::fs::write(&full_path, &file_bytes).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Extract tags
-    let metadata = extract_metadata(&full_path.to_string_lossy())
+    let mut metadata = extract_metadata(&full_path.to_string_lossy())
         .ok_or_else(|| {
             let _ = std::fs::remove_file(&full_path);
             (StatusCode::UNSUPPORTED_MEDIA_TYPE, "Failed to extract metadata".to_string())
         })?;
+
+    // If the extracted title matches the generated UUID, it fell back to the disk filename.
+    // In this case, override the title using the original filename's stem.
+    if let Some(ref title) = metadata.title {
+        if title == &file_uuid {
+            let orig_path = std::path::Path::new(&original_filename);
+            metadata.title = orig_path.file_stem().map(|s| s.to_string_lossy().to_string());
+        }
+    }
 
     // Deduplicate by content hash
     if let Some(ref hash) = metadata.content_hash {
