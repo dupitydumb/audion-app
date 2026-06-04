@@ -1,0 +1,399 @@
+use lofty::prelude::*;
+use lofty::probe::Probe;
+use lofty::mp4::{Mp4Codec, Mp4File};
+use lofty::tag::Tag as LoftyTag;
+use lofty::config::{ParseOptions, ParsingMode};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::path::Path;
+
+#[derive(Debug, Clone)]
+pub struct TrackMetadata {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub track_number: Option<i32>,
+    pub disc_number: Option<i32>,
+    pub duration: Option<i32>,
+    pub album_art: Option<Vec<u8>>,
+    pub track_cover: Option<Vec<u8>>,
+    pub format: Option<String>,
+    pub bitrate: Option<i32>,
+    pub content_hash: Option<String>,
+    pub musicbrainz_recording_id: Option<String>,
+    pub metadata_json: Option<String>,
+    pub genre: Option<String>,
+}
+
+fn generate_content_hash(
+    title: Option<&str>,
+    artist: Option<&str>,
+    album: Option<&str>,
+    duration: Option<i32>,
+) -> String {
+    let mut hasher = DefaultHasher::new();
+
+    let title_normalized = title.unwrap_or("").trim().to_lowercase();
+    let artist_normalized = artist.unwrap_or("").trim().to_lowercase();
+    let album_normalized = album.unwrap_or("").trim().to_lowercase();
+    let duration_str = duration.map(|d| d.to_string()).unwrap_or_default();
+
+    let combined = format!(
+        "{}|{}|{}|{}",
+        title_normalized, artist_normalized, album_normalized, duration_str
+    );
+
+    combined.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+pub fn extract_metadata(path: &str) -> Option<TrackMetadata> {
+    let path = Path::new(path);
+
+    let tagged_file_result = Probe::open(path)
+        .and_then(|probe| {
+            probe
+                .options(ParseOptions::new().parsing_mode(ParsingMode::Relaxed))
+                .read()
+        });
+
+    let tagged_file = match tagged_file_result {
+        Ok(file) => file,
+        Err(e) => {
+            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                match ext.to_lowercase().as_str() {
+                    "flac" => {
+                        eprintln!(
+                            "[Scanner] Lofty failed for FLAC {:?}: {}. Trying metaflac fallback...",
+                            path, e
+                        );
+                        return extract_flac_metadata_fallback(path, None);
+                    }
+                    "alac" => {
+                        eprintln!(
+                            "[Scanner] Lofty failed for ALAC {:?}: {}. Trying Mp4File fallback...",
+                            path, e
+                        );
+                        return extract_alac_metadata_fallback(path);
+                    }
+                    _ => {}
+                }
+            }
+            eprintln!(
+                "[Scanner] Failed to read audio file {:?}: {}. Returning fallback.",
+                path, e
+            );
+            return Some(create_fallback_metadata(path));
+        }
+    };
+
+    let properties = tagged_file.properties();
+    let duration = properties.duration().as_secs() as i32;
+    let bitrate = properties.audio_bitrate().map(|b| b as i32);
+    let format = {
+        let ext = path.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+    
+        match ext.as_str() {
+            "m4a" | "m4b" | "m4p" | "mp4" | "alac" => {
+                std::fs::File::open(path)
+                    .ok()
+                    .and_then(|mut f| {
+                        Mp4File::read_from(
+                            &mut f,
+                            ParseOptions::new().parsing_mode(ParsingMode::Relaxed)
+                        ).ok()
+                    })
+                    .map(|mp4| match mp4.properties().codec() {
+                        Mp4Codec::ALAC => "ALAC".to_string(),
+                        Mp4Codec::AAC  => "AAC".to_string(),
+                        Mp4Codec::FLAC => "FLAC".to_string(),
+                        Mp4Codec::MP3  => "MP3".to_string(),
+                        _              => "Mp4".to_string(),
+                    })
+            }
+            _ => Some(format!("{:?}", tagged_file.file_type())),
+        }
+    };
+
+    let tag = tagged_file
+        .primary_tag()
+        .or_else(|| tagged_file.first_tag());
+
+    match tag {
+        Some(tag) => {
+            let title = tag
+                .title()
+                .map(|s| s.to_string())
+                .or_else(|| get_filename_without_ext(path));
+            let artist = tag.artist().map(|s| s.to_string());
+            let album = tag.album().map(|s| s.to_string());
+            let genre = tag.genre().map(|s| s.to_string());
+
+            let track_number = tag.track().map(|n| n as i32).or_else(|| {
+                tag.get_string(&ItemKey::TrackNumber).and_then(|s| {
+                    s.split('/')
+                        .next()
+                        .and_then(|num| num.trim().parse::<i32>().ok())
+                })
+            });
+
+            let disc_number = tag.disk().map(|n| n as i32).or_else(|| {
+                tag.get_string(&ItemKey::DiscNumber).and_then(|s| {
+                    s.split('/')
+                        .next()
+                        .and_then(|num| num.trim().parse::<i32>().ok())
+                })
+            });
+
+            let album_art = tag.pictures().first().map(|pic| pic.data().to_vec());
+            let track_cover = tag.pictures().first().map(|pic| pic.data().to_vec());
+
+            let content_hash = Some(generate_content_hash(
+                title.as_deref(),
+                artist.as_deref(),
+                album.as_deref(),
+                Some(duration),
+            ));
+
+            let musicbrainz_recording_id = tag
+                .get_string(&ItemKey::MusicBrainzTrackId)
+                .map(|s| s.to_string());
+
+            let metadata_json = collect_all_metadata(tag);
+
+            Some(TrackMetadata {
+                title,
+                artist,
+                album,
+                track_number,
+                disc_number,
+                duration: Some(duration),
+                album_art,
+                track_cover,
+                format,
+                bitrate,
+                content_hash,
+                musicbrainz_recording_id,
+                metadata_json,
+                genre,
+            })
+        }
+        None => {
+            let mut track = create_fallback_metadata(path);
+            track.duration = Some(duration);
+            track.format = format;
+            track.bitrate = bitrate;
+            track.content_hash = Some(generate_content_hash(
+                track.title.as_deref(),
+                track.artist.as_deref(),
+                track.album.as_deref(),
+                Some(duration),
+            ));
+            Some(track)
+        }
+    }
+}
+
+fn collect_all_metadata(tag: &LoftyTag) -> Option<String> {
+    use serde_json::{Map, Value};
+    let mut metadata = Map::new();
+
+    let keys = [
+        ItemKey::TrackTitle,
+        ItemKey::TrackArtist,
+        ItemKey::AlbumTitle,
+        ItemKey::AlbumArtist,
+        ItemKey::Composer,
+        ItemKey::Genre,
+        ItemKey::TrackNumber,
+        ItemKey::TrackTotal,
+        ItemKey::DiscNumber,
+        ItemKey::DiscTotal,
+        ItemKey::Year,
+        ItemKey::Bpm,
+        ItemKey::Isrc,
+        ItemKey::Label,
+        ItemKey::CatalogNumber,
+        ItemKey::Comment,
+        ItemKey::Lyrics,
+        ItemKey::Conductor,
+        ItemKey::Language,
+        ItemKey::Publisher,
+        ItemKey::EncoderSettings,
+    ];
+
+    for key in keys {
+        if let Some(val) = tag.get_string(&key) {
+            metadata.insert(format!("{:?}", key), Value::String(val.to_string()));
+        }
+    }
+
+    if metadata.is_empty() {
+        return None;
+    }
+
+    serde_json::to_string(&metadata).ok()
+}
+
+fn create_fallback_metadata(path: &Path) -> TrackMetadata {
+    TrackMetadata {
+        title: get_filename_without_ext(path),
+        artist: None,
+        album: None,
+        track_number: None,
+        disc_number: None,
+        duration: None,
+        album_art: None,
+        track_cover: None,
+        format: None,
+        bitrate: None,
+        content_hash: None,
+        musicbrainz_recording_id: None,
+        metadata_json: None,
+        genre: None,
+    }
+}
+
+fn get_filename_without_ext(path: &Path) -> Option<String> {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+}
+
+fn extract_alac_metadata_fallback(path: &Path) -> Option<TrackMetadata> {
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[Scanner] Failed to open ALAC file {:?}: {}", path, e);
+            return Some(create_fallback_metadata(path));
+        }
+    };
+
+    let mp4 = match Mp4File::read_from(&mut file, ParseOptions::new().parsing_mode(ParsingMode::Relaxed)) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[Scanner] Mp4File fallback also failed for {:?}: {}", path, e);
+            return Some(create_fallback_metadata(path));
+        }
+    };
+
+    let properties = mp4.properties();
+    let duration = Some(properties.duration().as_secs() as i32);
+    let bitrate = Some(properties.audio_bitrate() as i32).filter(|&b| b > 0);
+    let format = Some("ALAC".to_string());
+
+    let ilst = mp4.ilst();
+
+    let title = ilst
+        .and_then(|t| t.title().map(|s| s.to_string()))
+        .or_else(|| get_filename_without_ext(path));
+    let artist = ilst.and_then(|t| t.artist().map(|s| s.to_string()));
+    let album = ilst.and_then(|t| t.album().map(|s| s.to_string()));
+    let genre = ilst.and_then(|t| t.genre().map(|s| s.to_string()));
+    let track_number = ilst.and_then(|t| t.track()).map(|n| n as i32);
+    let disc_number  = ilst.and_then(|t| t.disk()).map(|n| n as i32);
+
+    let album_art = ilst.and_then(|t| {
+        t.pictures().and_then(|mut iter| iter.next())
+            .map(|p: &lofty::picture::Picture| p.data().to_vec())
+    });
+
+    let content_hash = Some(generate_content_hash(
+        title.as_deref(),
+        artist.as_deref(),
+        album.as_deref(),
+        duration,
+    ));
+
+    Some(TrackMetadata {
+        title,
+        artist,
+        album,
+        track_number,
+        disc_number,
+        duration,
+        album_art: album_art.clone(),
+        track_cover: album_art,
+        format,
+        bitrate,
+        content_hash,
+        musicbrainz_recording_id: None,
+        metadata_json: None,
+        genre,
+    })
+}
+
+fn extract_flac_metadata_fallback(path: &Path, _duration_hint: Option<i32>) -> Option<TrackMetadata> {
+    use metaflac::Tag;
+
+    let format = Some("Flac".to_string());
+
+    match Tag::read_from_path(path) {
+        Ok(tag) => {
+            let vorbis = tag.vorbis_comments();
+
+            let title = vorbis
+                .and_then(|v| v.title().map(|s| s[0].clone()))
+                .or_else(|| get_filename_without_ext(path));
+            let artist = vorbis.and_then(|v| v.artist().map(|s| s[0].clone()));
+            let album = vorbis.and_then(|v| v.album().map(|s| s[0].clone()));
+            let genre = vorbis.and_then(|v| v.genre().map(|s| s[0].clone()));
+            let track_number = vorbis.and_then(|v| v.track().map(|n| n as i32));
+            let disc_number =
+                vorbis.and_then(|v| v.get("DISCNUMBER").and_then(|d| d[0].parse::<i32>().ok()));
+
+            let album_art = tag.pictures().next().map(|p| p.data.clone());
+
+            let duration = tag
+                .get_streaminfo()
+                .map(|si| {
+                    if si.sample_rate > 0 {
+                        (si.total_samples / si.sample_rate as u64) as i32
+                    } else {
+                        0
+                    }
+                })
+                .or(_duration_hint);
+
+            let content_hash = Some(generate_content_hash(
+                title.as_deref(),
+                artist.as_deref(),
+                album.as_deref(),
+                duration,
+            ));
+
+            Some(TrackMetadata {
+                title,
+                artist,
+                album,
+                track_number,
+                disc_number,
+                duration,
+                album_art: album_art.clone(),
+                track_cover: album_art,
+                format,
+                bitrate: None,
+                content_hash,
+                musicbrainz_recording_id: None,
+                metadata_json: None,
+                genre,
+            })
+        }
+        Err(e) => {
+            eprintln!("[Scanner] Metaflac also failed for {:?}: {}", path, e);
+            let mut track = create_fallback_metadata(path);
+            track.duration = _duration_hint;
+            track.format = format;
+            track.content_hash = Some(generate_content_hash(
+                track.title.as_deref(),
+                track.artist.as_deref(),
+                track.album.as_deref(),
+                track.duration,
+            ));
+            Some(track)
+        }
+    }
+}

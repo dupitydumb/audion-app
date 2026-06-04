@@ -1,0 +1,352 @@
+use axum::{
+    extract::{Multipart, Path, Query, State},
+    http::StatusCode,
+    Json,
+};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+use std::path::PathBuf;
+use tracing::{info, error};
+use sqlx::Row;
+
+use crate::state::AppState;
+use crate::auth::Claims;
+use crate::scanner::extract_metadata;
+use crate::events::ServerEvent;
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct TrackResponse {
+    pub id: i64,
+    pub path: String,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub track_number: Option<i32>,
+    pub disc_number: Option<i32>,
+    pub duration: Option<i32>,
+    pub album_id: Option<i64>,
+    pub format: Option<String>,
+    pub bitrate: Option<i32>,
+    pub source_type: Option<String>,
+    pub cover_url: Option<String>,
+    pub external_id: Option<String>,
+    pub local_src: Option<String>,
+    pub track_cover_path: Option<String>,
+    pub genre: Option<String>,
+    pub metadata_json: Option<String>,
+    pub date_added: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct PaginatedQuery {
+    pub page: Option<u32>,
+    pub limit: Option<u32>,
+}
+
+pub async fn get_tracks(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Query(query): Query<PaginatedQuery>,
+) -> Result<Json<Vec<TrackResponse>>, (StatusCode, String)> {
+    let page = query.page.unwrap_or(1).max(1);
+    let limit = query.limit.unwrap_or(50).max(1);
+    let offset = (page - 1) * limit;
+
+    let tracks = sqlx::query_as::<_, TrackResponse>(
+        "SELECT id, path, title, artist, album, track_number, disc_number, duration,
+                album_id, format, bitrate, source_type, cover_url, external_id,
+                local_src, track_cover_path, genre, metadata_json, date_added
+         FROM tracks
+         ORDER BY artist, album, disc_number, track_number, title
+         LIMIT ? OFFSET ?"
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(tracks))
+}
+
+pub async fn get_track_by_id(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<TrackResponse>, (StatusCode, String)> {
+    let track = sqlx::query_as::<_, TrackResponse>(
+        "SELECT id, path, title, artist, album, track_number, disc_number, duration,
+                album_id, format, bitrate, source_type, cover_url, external_id,
+                local_src, track_cover_path, genre, metadata_json, date_added
+         FROM tracks
+         WHERE id = ?"
+    )
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, "Track not found".to_string()))?;
+
+    Ok(Json(track))
+}
+
+pub async fn upload_track(
+    _claims: Claims,
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<(StatusCode, Json<TrackResponse>), (StatusCode, String)> {
+    let mut file_bytes = Vec::new();
+    let mut original_filename = String::new();
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))? {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "file" {
+            original_filename = field.file_name().unwrap_or("upload.mp3").to_string();
+            file_bytes = field.bytes().await.map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?.to_vec();
+        }
+    }
+
+    if file_bytes.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Missing file payload".to_string()));
+    }
+
+    // Generate unique storage name
+    let file_uuid = Uuid::new_v4().to_string();
+    let ext = PathBuf::from(&original_filename)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("mp3")
+        .to_string();
+    let relative_path = format!("music/{}.{}", file_uuid, ext);
+    let full_path = state.config.data_dir.join(&relative_path);
+
+    // Ensure music directory exists
+    if let Some(parent) = full_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    // Write file temporarily to run metadata extraction
+    std::fs::write(&full_path, &file_bytes).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Extract tags
+    let metadata = extract_metadata(&full_path.to_string_lossy())
+        .ok_or_else(|| {
+            let _ = std::fs::remove_file(&full_path);
+            (StatusCode::UNSUPPORTED_MEDIA_TYPE, "Failed to extract metadata".to_string())
+        })?;
+
+    // Deduplicate by content hash
+    if let Some(ref hash) = metadata.content_hash {
+        let existing = sqlx::query("SELECT id FROM tracks WHERE content_hash = ?")
+            .bind(hash)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&full_path);
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            })?;
+
+        if existing.is_some() {
+            let _ = std::fs::remove_file(&full_path);
+            return Err((StatusCode::CONFLICT, "Duplicate track detected".to_string()));
+        }
+    }
+
+    // Get or Create Album
+    let album_id = if let Some(album_name) = &metadata.album {
+        let existing_album = sqlx::query("SELECT id FROM albums WHERE name = ?")
+            .bind(album_name)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        if let Some(alb) = existing_album {
+            Some(alb.get::<i64, _>("id"))
+        } else {
+            let res = sqlx::query("INSERT INTO albums (name, artist) VALUES (?, ?)")
+                .bind(album_name)
+                .bind(&metadata.artist)
+                .execute(&state.pool)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            Some(res.last_insert_rowid())
+        }
+    } else {
+        None
+    };
+
+    // Insert track into DB
+    let res = sqlx::query(
+        "INSERT INTO tracks (
+            path, title, artist, album, track_number, disc_number, duration,
+            album_id, format, bitrate, source_type, cover_url, external_id,
+            local_src, genre, metadata_json, size
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(&relative_path)
+    .bind(&metadata.title)
+    .bind(&metadata.artist)
+    .bind(&metadata.album)
+    .bind(metadata.track_number)
+    .bind(metadata.disc_number)
+    .bind(metadata.duration)
+    .bind(album_id)
+    .bind(&metadata.format)
+    .bind(metadata.bitrate)
+    .bind(Option::<String>::None)
+    .bind(Option::<String>::None)
+    .bind(Option::<String>::None)
+    .bind(&metadata.genre)
+    .bind(&metadata.metadata_json)
+    .bind(file_bytes.len() as i64)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let track_id = res.last_insert_rowid();
+
+    // Ensure artwork directory exists
+    let artwork_dir = state.config.artwork_dir();
+    std::fs::create_dir_all(&artwork_dir).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Save track cover if present
+    if let Some(cover_data) = &metadata.track_cover {
+        let relative_cover = format!("artwork/track_{}.jpg", track_id);
+        let cover_full = state.config.data_dir.join(&relative_cover);
+        if std::fs::write(&cover_full, cover_data).is_ok() {
+            sqlx::query("UPDATE tracks SET track_cover_path = ? WHERE id = ?")
+                .bind(&relative_cover)
+                .bind(track_id)
+                .execute(&state.pool)
+                .await
+                .ok();
+        }
+    }
+
+    // Save album art if present and album doesn't have art yet
+    if let Some(alb_id) = album_id {
+        if let Some(art_data) = &metadata.album_art {
+            let has_art = sqlx::query("SELECT art_path FROM albums WHERE id = ? AND art_path IS NOT NULL")
+                .bind(alb_id)
+                .fetch_optional(&state.pool)
+                .await
+                .map(|o| o.is_some())
+                .unwrap_or(false);
+
+            if !has_art {
+                let relative_art = format!("artwork/album_{}.jpg", alb_id);
+                let art_full = state.config.data_dir.join(&relative_art);
+                if std::fs::write(&art_full, art_data).is_ok() {
+                    sqlx::query("UPDATE albums SET art_path = ? WHERE id = ?")
+                        .bind(&relative_art)
+                        .bind(alb_id)
+                        .execute(&state.pool)
+                        .await
+                        .ok();
+                }
+            }
+        }
+    }
+
+    // Retrieve full newly created track
+    let track = sqlx::query_as::<_, TrackResponse>(
+        "SELECT id, path, title, artist, album, track_number, disc_number, duration,
+                album_id, format, bitrate, source_type, cover_url, external_id,
+                local_src, track_cover_path, genre, metadata_json, date_added
+         FROM tracks
+         WHERE id = ?"
+    )
+    .bind(track_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Record Event in DB
+    let payload = serde_json::to_value(&track).unwrap_or(serde_json::Value::Null);
+    let payload_str = payload.to_string();
+    let event_type = "track.added";
+
+    let event_res = sqlx::query("INSERT INTO events (event_type, payload) VALUES (?, ?)")
+        .bind(event_type)
+        .bind(payload_str)
+        .execute(&state.pool)
+        .await;
+
+    if let Ok(er) = event_res {
+        let event_id = er.last_insert_rowid();
+        let time_now = chrono::Utc::now().to_rfc3339();
+        
+        // Broadcast Event
+        state.event_bus.broadcast(ServerEvent {
+            id: event_id,
+            event_type: event_type.to_string(),
+            payload,
+            created_at: time_now,
+        });
+    }
+
+    info!("Successfully uploaded track: {}", track.title.as_deref().unwrap_or(""));
+    Ok((StatusCode::CREATED, Json(track)))
+}
+
+pub async fn delete_track(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let track = sqlx::query("SELECT path, track_cover_path FROM tracks WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Track not found".to_string()))?;
+
+    let path_val = track.get::<String, _>("path");
+    let cover_path_val = track.get::<Option<String>, _>("track_cover_path");
+
+    // Delete files
+    let full_track_path = state.config.data_dir.join(&path_val);
+    if full_track_path.exists() {
+        let _ = std::fs::remove_file(full_track_path);
+    }
+    if let Some(ref cover_path) = cover_path_val {
+        let full_cover_path = state.config.data_dir.join(cover_path);
+        if full_cover_path.exists() {
+            let _ = std::fs::remove_file(full_cover_path);
+        }
+    }
+
+    // Delete from DB
+    sqlx::query("DELETE FROM tracks WHERE id = ?")
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Record Event in DB
+    let payload = serde_json::json!({ "id": id });
+    let payload_str = payload.to_string();
+    let event_type = "track.deleted";
+
+    let event_res = sqlx::query("INSERT INTO events (event_type, payload) VALUES (?, ?)")
+        .bind(event_type)
+        .bind(payload_str)
+        .execute(&state.pool)
+        .await;
+
+    if let Ok(er) = event_res {
+        let event_id = er.last_insert_rowid();
+        let time_now = chrono::Utc::now().to_rfc3339();
+
+        // Broadcast Event
+        state.event_bus.broadcast(ServerEvent {
+            id: event_id,
+            event_type: event_type.to_string(),
+            payload,
+            created_at: time_now,
+        });
+    }
+
+    info!("Successfully deleted track id: {}", id);
+    Ok(StatusCode::OK)
+}
