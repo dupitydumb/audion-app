@@ -298,11 +298,10 @@ pub async fn upload_track(
     Ok((StatusCode::CREATED, Json(track)))
 }
 
-pub async fn delete_track(
-    _claims: Claims,
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<StatusCode, (StatusCode, String)> {
+pub async fn delete_track_inner(
+    state: &AppState,
+    id: i64,
+) -> Result<(), (StatusCode, String)> {
     let track = sqlx::query("SELECT path, track_cover_path FROM tracks WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.pool)
@@ -361,8 +360,21 @@ pub async fn delete_track(
     }
 
     info!("Successfully deleted track id: {}", id);
+    Ok(())
+}
+
+pub async fn delete_track(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    delete_track_inner(&state, id).await?;
     Ok(StatusCode::OK)
 }
+
+
+
+
 
 fn clean_metadata_string(s: &str) -> String {
     let s_lower = s.to_lowercase();
@@ -676,12 +688,11 @@ pub struct SingleFetchRequest {
     pub provider: String,
 }
 
-pub async fn fetch_track_metadata(
-    _claims: Claims,
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Json(payload): Json<SingleFetchRequest>,
-) -> Result<Json<TrackResponse>, (StatusCode, String)> {
+pub async fn fetch_track_metadata_inner(
+    state: &AppState,
+    id: i64,
+    provider: &str,
+) -> Result<TrackResponse, (StatusCode, String)> {
     // 1. Get track path and metadata from DB
     let track_row = sqlx::query("SELECT id, path, title, artist, album, duration FROM tracks WHERE id = ?")
         .bind(id)
@@ -708,7 +719,7 @@ pub async fn fetch_track_metadata(
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 
-    if payload.provider == "musicbrainz" {
+    if provider == "musicbrainz" {
         let mb_match = crate::api::library::fetch_musicbrainz_metadata(
             &client,
             &parsed.title,
@@ -954,7 +965,74 @@ pub async fn fetch_track_metadata(
         });
     }
 
+    Ok(track)
+}
+
+pub async fn fetch_track_metadata(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(payload): Json<SingleFetchRequest>,
+) -> Result<Json<TrackResponse>, (StatusCode, String)> {
+    let track = fetch_track_metadata_inner(&state, id, &payload.provider).await?;
     Ok(Json(track))
 }
+
+#[derive(Deserialize)]
+pub struct BulkFetchRequest {
+    pub track_ids: Vec<i64>,
+    pub provider: String,
+}
+
+pub async fn bulk_fetch_metadata(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Json(payload): Json<BulkFetchRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    for id in payload.track_ids {
+        if let Err(e) = fetch_track_metadata_inner(&state, id, &payload.provider).await {
+            error!("Failed to fetch metadata for track {}: {:?}", id, e);
+        }
+        // Yield execution to avoid rate limits
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    Ok(StatusCode::OK)
+}
+
+#[derive(Deserialize)]
+pub struct BulkDeleteRequest {
+    pub track_ids: Vec<i64>,
+}
+
+pub async fn bulk_delete_tracks(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Json(payload): Json<BulkDeleteRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    for id in payload.track_ids {
+        if let Err(e) = delete_track_inner(&state, id).await {
+            error!("Failed to delete track {}: {:?}", id, e);
+        }
+    }
+    Ok(StatusCode::OK)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bulk_payload_deserialization() {
+        let json_data = r#"{"track_ids": [1, 2, 3], "provider": "musicbrainz"}"#;
+        let req: BulkFetchRequest = serde_json::from_str(json_data).unwrap();
+        assert_eq!(req.track_ids, vec![1, 2, 3]);
+        assert_eq!(req.provider, "musicbrainz");
+
+        let json_del = r#"{"track_ids": [10, 20]}"#;
+        let req_del: BulkDeleteRequest = serde_json::from_str(json_del).unwrap();
+        assert_eq!(req_del.track_ids, vec![10, 20]);
+    }
+}
+
 
 

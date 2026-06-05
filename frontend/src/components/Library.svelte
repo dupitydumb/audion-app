@@ -139,6 +139,117 @@
     name: string;
   }
 
+  let selectedTrackIds = $state<number[]>([]);
+  let isProcessingBulk = $state(false);
+  let showBulkPlaylistDropdown = $state(false);
+
+  function toggleTrackSelection(trackId: number) {
+    if (selectedTrackIds.includes(trackId)) {
+      selectedTrackIds = selectedTrackIds.filter(id => id !== trackId);
+    } else {
+      selectedTrackIds = [...selectedTrackIds, trackId];
+    }
+  }
+
+  function toggleSelectAll() {
+    if (selectedTrackIds.length === tracks.length) {
+      selectedTrackIds = [];
+    } else {
+      selectedTrackIds = tracks.map(t => t.id);
+    }
+  }
+
+  function clearSelection() {
+    selectedTrackIds = [];
+    showBulkPlaylistDropdown = false;
+  }
+
+  async function handleBulkDelete() {
+    if (selectedTrackIds.length === 0) return;
+    if (!confirm(`Are you sure you want to delete the ${selectedTrackIds.length} selected tracks?`)) {
+      return;
+    }
+    isProcessingBulk = true;
+    try {
+      const res = await fetch('/api/tracks/bulk/delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ track_ids: selectedTrackIds })
+      });
+      if (!res.ok) {
+        throw new Error('Failed to delete tracks in bulk');
+      }
+      addToast(`Successfully deleted ${selectedTrackIds.length} tracks`, 'success');
+      clearSelection();
+      fetchTracks();
+    } catch (err: any) {
+      addToast(err.message || 'Bulk delete failed', 'error');
+    } finally {
+      isProcessingBulk = false;
+    }
+  }
+
+  async function handleBulkFetch(provider: 'musicbrainz' | 'deezer') {
+    if (selectedTrackIds.length === 0) return;
+    isProcessingBulk = true;
+    try {
+      const res = await fetch('/api/tracks/bulk/fetch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          track_ids: selectedTrackIds,
+          provider
+        })
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to fetch metadata from ${provider}`);
+      }
+      addToast(`Bulk metadata fetch completed! Refreshing track details...`, 'success');
+      clearSelection();
+      fetchTracks();
+    } catch (err: any) {
+      addToast(err.message || 'Bulk fetch failed', 'error');
+    } finally {
+      isProcessingBulk = false;
+    }
+  }
+
+  async function handleBulkAddToPlaylist(playlistId: number) {
+    if (selectedTrackIds.length === 0) return;
+    isProcessingBulk = true;
+    try {
+      const res = await fetch(`/api/playlists/${playlistId}/tracks/bulk`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ track_ids: selectedTrackIds })
+      });
+      if (!res.ok) {
+        throw new Error('Failed to add tracks to playlist in bulk');
+      }
+      addToast(`Successfully added ${selectedTrackIds.length} tracks to playlist`, 'success');
+      clearSelection();
+    } catch (err: any) {
+      addToast(err.message || 'Bulk add to playlist failed', 'error');
+    } finally {
+      isProcessingBulk = false;
+      showBulkPlaylistDropdown = false;
+    }
+  }
+
+  interface Playlist {
+    id: number;
+    name: string;
+  }
+
   let tracks = $state<Track[]>([]);
   let playlists = $state<Playlist[]>([]);
   let searchQuery = $state('');
@@ -266,6 +377,7 @@
 
     const handleGlobalClick = () => {
       openPlaylistDropdownId = null;
+      showBulkPlaylistDropdown = false;
     };
     window.addEventListener('click', handleGlobalClick);
     return () => {
@@ -313,6 +425,14 @@
       <table class="library-table" style="font-size: 0.95rem;">
         <thead>
           <tr>
+            <th style="width: 40px; text-align: center; vertical-align: middle;">
+              <input 
+                type="checkbox" 
+                checked={tracks.length > 0 && selectedTrackIds.length === tracks.length}
+                onchange={toggleSelectAll}
+                style="cursor: pointer; accent-color: var(--accent); scale: 1.1;"
+              />
+            </th>
             <th style="width: 50px;"></th>
             <th>Title</th>
             <th>Artist</th>
@@ -325,6 +445,14 @@
         <tbody>
           {#each tracks as track (track.id)}
             <tr>
+              <td style="text-align: center; vertical-align: middle;">
+                <input 
+                  type="checkbox" 
+                  checked={selectedTrackIds.includes(track.id)}
+                  onchange={() => toggleTrackSelection(track.id)}
+                  style="cursor: pointer; accent-color: var(--accent); scale: 1.1;"
+                />
+              </td>
               <td>
                 <button 
                   onclick={() => onPlayTrack({ 
@@ -557,6 +685,84 @@
   </div>
 {/if}
 
+{#if selectedTrackIds.length > 0}
+  <div class="bulk-bar-container">
+    <div class="bulk-bar-info">
+      <span>Selected</span>
+      <span class="bulk-bar-badge">{selectedTrackIds.length}</span>
+    </div>
+    <div class="bulk-actions-group">
+      <button 
+        type="button" 
+        class="btn-bulk" 
+        onclick={() => handleBulkFetch('musicbrainz')} 
+        disabled={isProcessingBulk}
+      >
+        <RefreshCw size={14} class={isProcessingBulk ? "animate-spin" : ""} style={isProcessingBulk ? "animation: spin 1s linear infinite; margin-right: 0.2rem;" : "margin-right: 0.2rem;"} />
+        Fetch MB
+      </button>
+      <button 
+        type="button" 
+        class="btn-bulk" 
+        onclick={() => handleBulkFetch('deezer')} 
+        disabled={isProcessingBulk}
+      >
+        <RefreshCw size={14} class={isProcessingBulk ? "animate-spin" : ""} style={isProcessingBulk ? "animation: spin 1s linear infinite; margin-right: 0.2rem;" : "margin-right: 0.2rem;"} />
+        Fetch Deezer
+      </button>
+      
+      <div style="position: relative; display: inline-block;">
+        <button 
+          type="button" 
+          class="btn-bulk" 
+          onclick={(e) => { e.stopPropagation(); showBulkPlaylistDropdown = !showBulkPlaylistDropdown; }} 
+          disabled={isProcessingBulk}
+        >
+          <Plus size={14} style="margin-right: 0.2rem;" />
+          Add to Playlist
+        </button>
+        {#if showBulkPlaylistDropdown}
+          <div class="bulk-playlist-menu glass-card">
+            {#if playlists.length === 0}
+              <div style="padding: 0.5rem; font-size: 0.75rem; color: var(--text-muted); text-align: center;">No playlists.</div>
+            {:else}
+              {#each playlists as pl}
+                <button 
+                  type="button"
+                  onclick={() => handleBulkAddToPlaylist(pl.id)} 
+                  class="dropdown-item"
+                >
+                  {pl.name}
+                </button>
+              {/each}
+            {/if}
+          </div>
+        {/if}
+      </div>
+
+      <button 
+        type="button" 
+        class="btn-bulk btn-bulk-danger" 
+        onclick={handleBulkDelete} 
+        disabled={isProcessingBulk}
+      >
+        <Trash2 size={14} style="margin-right: 0.2rem;" />
+        Delete Selected
+      </button>
+      
+      <button 
+        type="button" 
+        class="btn-bulk" 
+        onclick={clearSelection} 
+        disabled={isProcessingBulk}
+        style="border: none; background: transparent;"
+      >
+        Cancel
+      </button>
+    </div>
+  </div>
+{/if}
+
 <style>
   @keyframes spin {
     from { transform: rotate(0deg); }
@@ -648,5 +854,101 @@
     padding: 2rem;
     border: 1px solid var(--border-color);
     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Bulk Actions Floating Bar */
+  .bulk-bar-container {
+    position: fixed;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 900;
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    padding: 0.85rem 1.75rem;
+    border-radius: 100px;
+    background: rgba(18, 18, 22, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.7), 
+                0 0 20px 0 rgba(168, 85, 247, 0.15); /* Purple accent glow */
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .bulk-bar-info {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    padding-right: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .bulk-bar-badge {
+    background: var(--accent, #a855f7);
+    color: #fff;
+    font-size: 0.8rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 20px;
+    font-weight: 700;
+  }
+
+  .bulk-actions-group {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .btn-bulk {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    padding: 0.5rem 1.25rem;
+    border-radius: 50px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-bulk:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  .btn-bulk-danger {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    border-color: rgba(239, 68, 68, 0.2);
+  }
+
+  .btn-bulk-danger:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.25);
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.4);
+  }
+
+  .bulk-playlist-menu {
+    position: absolute;
+    bottom: calc(100% + 10px);
+    right: 0;
+    background: #0d0d0f;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.35rem;
+    min-width: 180px;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 950;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
   }
 </style>

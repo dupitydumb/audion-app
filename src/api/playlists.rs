@@ -412,3 +412,83 @@ pub async fn reorder_playlist_tracks(
 
     Ok(StatusCode::OK)
 }
+
+#[derive(Deserialize)]
+pub struct BulkAddTracksRequest {
+    pub track_ids: Vec<i64>,
+}
+
+pub async fn bulk_add_tracks_to_playlist(
+    claims: Claims,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(payload): Json<BulkAddTracksRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    // 1. Verify ownership of the playlist
+    let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
+        .bind(id)
+        .bind(&claims.sub)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Playlist not found".to_string()))?;
+
+    // 2. Start a transaction
+    let mut tx = state.pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // 3. Get current max position
+    let max_pos = sqlx::query("SELECT MAX(position) FROM playlist_tracks WHERE playlist_id = ?")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await
+        .map(|r| r.get::<Option<i64>, _>(0).unwrap_or(-1))
+        .unwrap_or(-1);
+
+    let mut next_pos = max_pos + 1;
+    let mut added_any = false;
+
+    // 4. Loop over all requested tracks
+    for track_id in payload.track_ids {
+        // Check if track is already in playlist
+        let already_in = sqlx::query(
+            "SELECT position FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?"
+        )
+        .bind(id)
+        .bind(track_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        if already_in.is_some() {
+            continue;
+        }
+
+        // Insert
+        sqlx::query(
+            "INSERT INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)"
+        )
+        .bind(id)
+        .bind(track_id)
+        .bind(next_pos)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        next_pos += 1;
+        added_any = true;
+    }
+
+    // 5. Commit transaction
+    tx.commit().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if added_any {
+        log_and_broadcast_event(
+            &state,
+            "playlist.updated",
+            serde_json::json!({ "id": id })
+        ).await;
+    }
+
+    Ok(StatusCode::OK)
+}
+
