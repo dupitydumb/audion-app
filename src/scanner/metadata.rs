@@ -135,15 +135,15 @@ pub fn extract_metadata(path: &str) -> Option<TrackMetadata> {
                 })
             };
 
-            let title = get_non_empty(tag.title())
+            let title = get_non_empty(tag.title().as_deref())
                 .or_else(|| get_non_empty(tag.get_string(&ItemKey::TrackTitle)))
                 .or_else(|| get_filename_without_ext(path));
-            let artist = get_non_empty(tag.artist())
+            let artist = get_non_empty(tag.artist().as_deref())
                 .or_else(|| get_non_empty(tag.get_string(&ItemKey::TrackArtist)))
                 .or_else(|| get_non_empty(tag.get_string(&ItemKey::AlbumArtist)));
-            let album = get_non_empty(tag.album())
+            let album = get_non_empty(tag.album().as_deref())
                 .or_else(|| get_non_empty(tag.get_string(&ItemKey::AlbumTitle)));
-            let genre = get_non_empty(tag.genre())
+            let genre = get_non_empty(tag.genre().as_deref())
                 .or_else(|| get_non_empty(tag.get_string(&ItemKey::Genre)));
 
             let track_number = tag.track().map(|n| n as i32).or_else(|| {

@@ -12,8 +12,6 @@ pub async fn setup_database(db_path: &Path) -> Result<SqlitePool, sqlx::Error> {
         std::fs::create_dir_all(parent).ok();
     }
 
-    let db_url = format!("sqlite://{}", db_path.to_string_lossy());
-    
     let options = SqliteConnectOptions::new()
         .filename(db_path)
         .create_if_missing(true)
