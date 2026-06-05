@@ -692,16 +692,16 @@ pub async fn fetch_track_metadata(
 
     let track_path: String = track_row.get("path");
     let current_title: Option<String> = track_row.get("title");
+    let current_artist: Option<String> = track_row.get("artist");
+    let current_album: Option<String> = track_row.get("album");
+    let duration: Option<i32> = track_row.get("duration");
 
-    let filename = std::path::Path::new(&track_path)
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    let target_title = current_title
-        .filter(|t| !t.trim().is_empty() && !t.starts_with("music/"))
-        .unwrap_or(filename);
-    let search_term = crate::api::library::clean_search_term(&target_title);
+    let parsed = crate::api::library::parse_track_info(
+        &track_path,
+        current_title.as_deref(),
+        current_artist.as_deref(),
+        current_album.as_deref()
+    );
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -709,9 +709,15 @@ pub async fn fetch_track_metadata(
         .unwrap_or_else(|_| reqwest::Client::new());
 
     if payload.provider == "musicbrainz" {
-        let mb_match = crate::api::library::fetch_musicbrainz_metadata(&client, &search_term)
-            .await
-            .ok_or_else(|| (StatusCode::NOT_FOUND, "No matching metadata found on MusicBrainz".to_string()))?;
+        let mb_match = crate::api::library::fetch_musicbrainz_metadata(
+            &client,
+            &parsed.title,
+            parsed.artist.as_deref(),
+            parsed.album.as_deref(),
+            duration,
+        )
+        .await
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "No matching metadata found on MusicBrainz".to_string()))?;
 
         let album_id = crate::api::library::match_or_create_album(&state.pool, &mb_match.album, &mb_match.artist).await;
         let metadata_json = serde_json::to_string(&mb_match).ok();
@@ -807,8 +813,14 @@ pub async fn fetch_track_metadata(
     } else {
         // Deezer fetch
         let url = "https://api.deezer.com/search";
+        let query_param = if let Some(ref artist) = parsed.artist {
+            format!("{} {}", parsed.title, artist)
+        } else {
+            parsed.title.clone()
+        };
+
         let resp = client.get(url)
-            .query(&[("q", &search_term)])
+            .query(&[("q", &query_param)])
             .send()
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Deezer request failed: {}", e)))?;
@@ -816,11 +828,28 @@ pub async fn fetch_track_metadata(
         let search_res = resp.json::<crate::api::library::DeezerSearchResponse>().await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to parse Deezer response: {}", e)))?;
 
-        if search_res.data.is_empty() {
-            return Err((StatusCode::NOT_FOUND, "No matching metadata found on Deezer".to_string()));
+        let mut best_match: Option<(&crate::api::library::DeezerTrack, f64)> = None;
+        for candidate in search_res.data.iter() {
+            let score = crate::api::library::calculate_match_score(
+                &parsed.title,
+                parsed.artist.as_deref(),
+                parsed.album.as_deref(),
+                duration,
+                &candidate.title,
+                &candidate.artist.name,
+                &candidate.album.title,
+                candidate.duration,
+            );
+            if score >= 0.5 {
+                if best_match.is_none() || score > best_match.as_ref().unwrap().1 {
+                    best_match = Some((candidate, score));
+                }
+            }
         }
 
-        let match_track = &search_res.data[0];
+        let match_track = best_match
+            .map(|(t, _)| t)
+            .ok_or_else(|| (StatusCode::NOT_FOUND, "No matching metadata found on Deezer above confidence threshold".to_string()))?;
         let album_id = crate::api::library::match_or_create_album(&state.pool, &match_track.album.title, &match_track.artist.name).await;
         let metadata_json = serde_json::to_value(&match_track).ok().map(|v| v.to_string());
         let ext_id = Some(match_track.id.to_string());

@@ -133,87 +133,140 @@ pub struct MusicBrainzMatch {
 
 pub async fn fetch_musicbrainz_metadata(
     client: &reqwest::Client,
-    search_term: &str,
+    target_title: &str,
+    target_artist: Option<&str>,
+    target_album: Option<&str>,
+    target_duration: Option<i32>,
 ) -> Option<MusicBrainzMatch> {
     let url = "https://musicbrainz.org/ws/2/recording";
-    let query_param = search_term
-        .replace(":", " ")
-        .replace("-", " ")
-        .replace("\"", " ");
     
-    let response = client.get(url)
+    // 1. Build a specific targeted query
+    let mut query_parts = Vec::new();
+    query_parts.push(format!("recording:\"{}\"", target_title.replace(":", " ").replace("-", " ").replace("\"", " ")));
+    if let Some(artist) = target_artist {
+        query_parts.push(format!("artist:\"{}\"", artist.replace(":", " ").replace("-", " ").replace("\"", " ")));
+    }
+    if let Some(album) = target_album {
+        query_parts.push(format!("release:\"{}\"", album.replace(":", " ").replace("-", " ").replace("\"", " ")));
+    }
+    let query_param = query_parts.join(" AND ");
+
+    let mut response = client.get(url)
         .header("User-Agent", "Audion/0.1.0 ( contact@audion.local )")
-        .query(&[("query", query_param.as_str()), ("fmt", "json")])
+        .query(&[("query", query_param.as_str()), ("fmt", "json"), ("limit", "10")])
         .send()
         .await
         .ok()?;
 
-    if !response.status().is_success() {
-        return None;
+    let mut search_res = if response.status().is_success() {
+        response.json::<MbSearchResponse>().await.ok()
+    } else {
+        None
+    };
+
+    // 2. Fallback: if we got no results, try a broader query (just title and artist)
+    if search_res.is_none() || search_res.as_ref().unwrap().recordings.is_empty() {
+        if target_artist.is_some() {
+            let broad_query = format!("{} {}", target_title, target_artist.unwrap());
+            let clean_broad = broad_query.replace(":", " ").replace("-", " ").replace("\"", " ");
+            response = client.get(url)
+                .header("User-Agent", "Audion/0.1.0 ( contact@audion.local )")
+                .query(&[("query", clean_broad.as_str()), ("fmt", "json"), ("limit", "10")])
+                .send()
+                .await
+                .ok()?;
+
+            if response.status().is_success() {
+                search_res = response.json::<MbSearchResponse>().await.ok();
+            }
+        }
     }
 
-    let search_res = response.json::<MbSearchResponse>().await.ok()?;
+    let search_res = search_res?;
     if search_res.recordings.is_empty() {
         return None;
     }
 
-    let recording = &search_res.recordings[0];
-    
-    let title = recording.title.clone();
-    
-    let artist = recording.artist_credit.as_ref()
-        .and_then(|ac| ac.first())
-        .map(|c| c.artist.name.clone())
-        .unwrap_or_else(|| "Unknown Artist".to_string());
+    // 3. Iterate candidates, score them, and pick the best candidate above confidence threshold
+    let mut best_match: Option<(MusicBrainzMatch, f64)> = None;
+
+    for recording in search_res.recordings.iter() {
+        let title = recording.title.clone();
         
-    let release = recording.releases.as_ref().and_then(|r| r.first());
-    let album = release.map(|r| r.title.clone()).unwrap_or_else(|| "Unknown Album".to_string());
-    let release_id = release.map(|r| r.id.clone());
-    
-    let mut track_number = None;
-    let mut disc_number = None;
-    
-    if let Some(r) = release {
-        if let Some(ref media) = r.media {
-            for (m_idx, m) in media.iter().enumerate() {
-                if let Some(ref tracks) = m.tracks {
-                    for t in tracks {
-                        if let Some(ref num) = t.number {
-                            if let Ok(n) = num.parse::<i32>() {
-                                track_number = Some(n);
-                                disc_number = Some((m_idx + 1) as i32);
-                                break;
+        let artist = recording.artist_credit.as_ref()
+            .and_then(|ac| ac.first())
+            .map(|c| c.artist.name.clone())
+            .unwrap_or_else(|| "Unknown Artist".to_string());
+            
+        let release = recording.releases.as_ref().and_then(|r| r.first());
+        let album = release.map(|r| r.title.clone()).unwrap_or_else(|| "Unknown Album".to_string());
+        let release_id = release.map(|r| r.id.clone());
+        
+        let mut track_number = None;
+        let mut disc_number = None;
+        
+        if let Some(r) = release {
+            if let Some(ref media) = r.media {
+                for (m_idx, m) in media.iter().enumerate() {
+                    if let Some(ref tracks) = m.tracks {
+                        for t in tracks {
+                            if let Some(ref num) = t.number {
+                                if let Ok(n) = num.parse::<i32>() {
+                                    track_number = Some(n);
+                                    disc_number = Some((m_idx + 1) as i32);
+                                    break;
+                                }
                             }
                         }
                     }
-                }
-                if track_number.is_some() {
-                    break;
+                    if track_number.is_some() {
+                        break;
+                    }
                 }
             }
         }
+        
+        let genre = recording.tags.as_ref()
+            .and_then(|tags| {
+                tags.iter()
+                    .max_by_key(|t| t.count)
+                    .map(|t| t.name.clone())
+            });
+
+        let duration = recording.length.map(|l| (l / 1000) as i32);
+
+        let candidate_match = MusicBrainzMatch {
+            title: title.clone(),
+            artist: artist.clone(),
+            album: album.clone(),
+            track_number,
+            disc_number,
+            genre,
+            release_id,
+            recording_id: recording.id.clone(),
+            duration,
+        };
+
+        // Score this candidate
+        let score = calculate_match_score(
+            target_title,
+            target_artist,
+            target_album,
+            target_duration,
+            &title,
+            &artist,
+            &album,
+            duration,
+        );
+
+        if score >= 0.5 { // Match confidence threshold
+            if best_match.is_none() || score > best_match.as_ref().unwrap().1 {
+                best_match = Some((candidate_match, score));
+            }
+        }
     }
-    
-    let genre = recording.tags.as_ref()
-        .and_then(|tags| {
-            tags.iter()
-                .max_by_key(|t| t.count)
-                .map(|t| t.name.clone())
-        });
 
-    let duration = recording.length.map(|l| (l / 1000) as i32);
-
-    Some(MusicBrainzMatch {
-        title,
-        artist,
-        album,
-        track_number,
-        disc_number,
-        genre,
-        release_id,
-        recording_id: recording.id.clone(),
-        duration,
-    })
+    best_match.map(|(m, _)| m)
 }
 
 pub async fn get_scan_status(
@@ -489,7 +542,7 @@ pub async fn start_metadata_fetcher(
     tokio::spawn(async move {
         // Query tracks missing metadata (unknown titles or missing artists/albums)
         let tracks_res = sqlx::query(
-            "SELECT id, path, title, artist, album FROM tracks 
+            "SELECT id, path, title, artist, album, duration FROM tracks 
              WHERE artist IS NULL OR album IS NULL OR title IS NULL OR title = '' OR title LIKE 'music/%'"
         )
         .fetch_all(&pool)
@@ -524,28 +577,31 @@ pub async fn start_metadata_fetcher(
             let track_id: i64 = row.get("id");
             let track_path: String = row.get("path");
             let current_title: Option<String> = row.get("title");
+            let current_artist: Option<String> = row.get("artist");
+            let current_album: Option<String> = row.get("album");
+            let duration: Option<i32> = row.get("duration");
 
-            let filename = Path::new(&track_path)
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            let target_title = current_title.filter(|t| !t.trim().is_empty() && !t.starts_with("music/")).unwrap_or(filename);
-            let search_term = clean_search_term(&target_title);
+            let parsed = parse_track_info(&track_path, current_title.as_deref(), current_artist.as_deref(), current_album.as_deref());
 
             {
                 let mut status = fetcher_status.lock().unwrap();
                 status.tracks_processed = idx + 1;
-                status.current_track = Some(search_term.clone());
+                status.current_track = Some(parsed.title.clone());
             }
 
-            let search_msg = format!("[{}/{}] Searching for: {}", idx + 1, total, search_term);
+            let search_msg = format!("[{}/{}] Searching for: {}", idx + 1, total, parsed.title);
             log_fetcher_message(&fetcher_status, &event_bus, &search_msg);
 
             let provider_run = provider_clone.clone();
 
             if provider_run == "musicbrainz" {
-                let mb_match_opt = fetch_musicbrainz_metadata(&client, &search_term).await;
+                let mb_match_opt = fetch_musicbrainz_metadata(
+                    &client,
+                    &parsed.title,
+                    parsed.artist.as_deref(),
+                    parsed.album.as_deref(),
+                    duration,
+                ).await;
 
                 match mb_match_opt {
                     Some(mb_match) => {
@@ -695,8 +751,14 @@ pub async fn start_metadata_fetcher(
             } else {
                 // Fetch from Deezer API
                 let url = "https://api.deezer.com/search";
+                let query_param = if let Some(ref artist) = parsed.artist {
+                    format!("{} {}", parsed.title, artist)
+                } else {
+                    parsed.title.clone()
+                };
+
                 let response = client.get(url)
-                    .query(&[("q", &search_term)])
+                    .query(&[("q", &query_param)])
                     .send()
                     .await;
 
@@ -704,10 +766,28 @@ pub async fn start_metadata_fetcher(
                     Ok(resp) => {
                         if resp.status().is_success() {
                             if let Ok(search_res) = resp.json::<DeezerSearchResponse>().await {
-                                if !search_res.data.is_empty() {
-                                    let match_track = &search_res.data[0];
+                                let mut best_match: Option<(&DeezerTrack, f64)> = None;
+                                for candidate in search_res.data.iter() {
+                                    let score = calculate_match_score(
+                                        &parsed.title,
+                                        parsed.artist.as_deref(),
+                                        parsed.album.as_deref(),
+                                        duration,
+                                        &candidate.title,
+                                        &candidate.artist.name,
+                                        &candidate.album.title,
+                                        candidate.duration,
+                                    );
+                                    if score >= 0.5 {
+                                        if best_match.is_none() || score > best_match.as_ref().unwrap().1 {
+                                            best_match = Some((candidate, score));
+                                        }
+                                    }
+                                }
+
+                                if let Some((match_track, _)) = best_match {
                                     let found_msg = format!(
-                                        "  -> Match found: \"{}\" by \"{}\" (Album: \"{}\")",
+                                        "  -> Match found (Deezer): \"{}\" by \"{}\" (Album: \"{}\")",
                                         match_track.title, match_track.artist.name, match_track.album.title
                                     );
                                     log_fetcher_message(&fetcher_status, &event_bus, &found_msg);
@@ -820,7 +900,7 @@ pub async fn start_metadata_fetcher(
                                         }
                                     }
                                 } else {
-                                    log_fetcher_message(&fetcher_status, &event_bus, "  -> No match found.");
+                                    log_fetcher_message(&fetcher_status, &event_bus, "  -> No matching track found above confidence threshold on Deezer.");
                                 }
                             }
                         } else {
@@ -1068,3 +1148,344 @@ pub async fn match_or_create_album(pool: &sqlx::SqlitePool, name: &str, artist: 
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct ParsedTrackQuery {
+    pub title: String,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+}
+
+pub fn parse_track_info(
+    path: &str,
+    title: Option<&str>,
+    artist: Option<&str>,
+    album: Option<&str>,
+) -> ParsedTrackQuery {
+    let db_artist = artist.filter(|s| !s.trim().is_empty());
+    let db_title = title.filter(|s| !s.trim().is_empty() && !s.starts_with("music/"));
+    let db_album = album.filter(|s| !s.trim().is_empty());
+
+    if let (Some(t), Some(a)) = (db_title, db_artist) {
+        return ParsedTrackQuery {
+            title: t.to_string(),
+            artist: Some(a.to_string()),
+            album: db_album.map(|s| s.to_string()),
+        };
+    }
+
+    // Fallback: parse filename
+    let filename = Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let cleaned_filename = filename.replace('_', " ");
+
+    let mut parts: Vec<&str> = cleaned_filename.split(" - ").collect();
+    if !parts.is_empty() {
+        let first = parts[0].trim();
+        let is_num = first.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-');
+        if is_num && parts.len() > 1 {
+            parts.remove(0);
+        }
+    }
+
+    if parts.len() >= 2 {
+        let clean_parts: Vec<String> = parts.iter().map(|p| {
+            let mut s = p.trim().to_string();
+            let words: Vec<&str> = s.split_whitespace().collect();
+            if !words.is_empty() {
+                let first = words[0];
+                let is_num = first.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-');
+                if is_num && words.len() > 1 {
+                    s = words[1..].join(" ");
+                }
+            }
+            s
+        }).collect();
+
+        if clean_parts.len() == 2 {
+            return ParsedTrackQuery {
+                title: clean_parts[1].clone(),
+                artist: Some(clean_parts[0].clone()),
+                album: db_album.map(|s| s.to_string()),
+            };
+        } else if clean_parts.len() >= 3 {
+            let artist_val = clean_parts[0].clone();
+            let title_val = clean_parts[clean_parts.len() - 1].clone();
+            let album_val = Some(clean_parts[1].clone());
+            return ParsedTrackQuery {
+                title: title_val,
+                artist: Some(artist_val),
+                album: album_val,
+            };
+        }
+    }
+
+    let fallback_title = db_title.map(|s| s.to_string()).unwrap_or_else(|| {
+        let mut s = cleaned_filename.trim().to_string();
+        let words: Vec<&str> = s.split_whitespace().collect();
+        if !words.is_empty() {
+            let first = words[0];
+            let is_num = first.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-');
+            if is_num && words.len() > 1 {
+                s = words[1..].join(" ");
+            }
+        }
+        s
+    });
+
+    ParsedTrackQuery {
+        title: fallback_title,
+        artist: db_artist.map(|s| s.to_string()),
+        album: db_album.map(|s| s.to_string()),
+    }
+}
+
+pub fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let a_len = a_chars.len();
+    let b_len = b_chars.len();
+
+    if a_len == 0 { return b_len; }
+    if b_len == 0 { return a_len; }
+
+    let mut dp = vec![0; b_len + 1];
+    for j in 0..=b_len {
+        dp[j] = j;
+    }
+
+    for i in 1..=a_len {
+        let mut prev = dp[0];
+        dp[0] = i;
+        for j in 1..=b_len {
+            let temp = dp[j];
+            if a_chars[i - 1] == b_chars[j - 1] {
+                dp[j] = prev;
+            } else {
+                dp[j] = std::cmp::min(
+                    prev + 1,
+                    std::cmp::min(
+                        dp[j] + 1,
+                        dp[j - 1] + 1
+                    )
+                );
+            }
+            prev = temp;
+        }
+    }
+    dp[b_len]
+}
+
+pub fn clean_string_for_compare(s: &str) -> String {
+    let mut cleaned = s.to_lowercase();
+    cleaned = cleaned.replace(|c: char| !c.is_alphanumeric() && !c.is_whitespace(), " ");
+    
+    let stop_words = vec![
+        "feat", "featuring", "remastered", "remaster", "live", "acoustic", "version", "hq", "official"
+    ];
+    for word in stop_words {
+        cleaned = cleaned.replace(word, " ");
+    }
+
+    // Remove 4-digit years starting with 19 or 20 (e.g., 1990, 2009)
+    cleaned = cleaned.split_whitespace()
+        .filter(|w| !(w.len() == 4 && w.chars().all(|c| c.is_ascii_digit()) && (w.starts_with("19") || w.starts_with("20"))))
+        .collect::<Vec<&str>>()
+        .join(" ");
+
+    cleaned
+}
+
+pub fn string_similarity(a: &str, b: &str) -> f64 {
+    if a.is_empty() && b.is_empty() { return 1.0; }
+    if a.is_empty() || b.is_empty() { return 0.0; }
+    
+    let clean_a = clean_string_for_compare(a);
+    let clean_b = clean_string_for_compare(b);
+    
+    if clean_a == clean_b { return 1.0; }
+
+    let a_tokens: std::collections::HashSet<&str> = clean_a.split_whitespace().collect();
+    let b_tokens: std::collections::HashSet<&str> = clean_b.split_whitespace().collect();
+
+    let intersection = a_tokens.intersection(&b_tokens).count();
+    let union = a_tokens.union(&b_tokens).count();
+
+    if union == 0 {
+        return 0.0;
+    }
+
+    let token_sim = intersection as f64 / union as f64;
+
+    let lev = levenshtein_distance(&clean_a, &clean_b);
+    let max_len = std::cmp::max(clean_a.chars().count(), clean_b.chars().count());
+    let lev_sim = if max_len == 0 { 0.0 } else { 1.0 - (lev as f64 / max_len as f64) };
+
+    (token_sim * 0.6) + (lev_sim * 0.4)
+}
+
+pub fn calculate_match_score(
+    target_title: &str,
+    target_artist: Option<&str>,
+    target_album: Option<&str>,
+    target_duration: Option<i32>,
+    candidate_title: &str,
+    candidate_artist: &str,
+    candidate_album: &str,
+    candidate_duration: Option<i32>,
+) -> f64 {
+    let title_score = string_similarity(target_title, candidate_title);
+
+    let artist_score = if let Some(t_artist) = target_artist {
+        string_similarity(t_artist, candidate_artist)
+    } else {
+        1.0
+    };
+
+    let album_score = if let Some(t_album) = target_album {
+        string_similarity(t_album, candidate_album)
+    } else {
+        1.0
+    };
+
+    let duration_score = if let (Some(t_dur), Some(c_dur)) = (target_duration, candidate_duration) {
+        let diff = (t_dur - c_dur).abs();
+        if diff <= 2 {
+            1.0
+        } else if diff <= 5 {
+            0.8
+        } else if diff <= 10 {
+            0.5
+        } else if diff <= 20 {
+            0.2
+        } else {
+            0.0
+        }
+    } else {
+        1.0
+    };
+
+    let mut score = 0.0;
+    if target_artist.is_some() {
+        if target_album.is_some() {
+            score += title_score * 0.40;
+            score += artist_score * 0.40;
+            score += album_score * 0.10;
+            score += duration_score * 0.10;
+        } else {
+            score += title_score * 0.45;
+            score += artist_score * 0.45;
+            score += duration_score * 0.10;
+        }
+    } else {
+        if target_album.is_some() {
+            score += title_score * 0.70;
+            score += album_score * 0.10;
+            score += duration_score * 0.20;
+        } else {
+            score += title_score * 0.80;
+            score += duration_score * 0.20;
+        }
+    }
+
+    score
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_track_info_structured_filename() {
+        // Test "Artist - Title" format
+        let q = parse_track_info("C:/music/The Beatles - Yesterday.mp3", None, None, None);
+        assert_eq!(q.title, "Yesterday");
+        assert_eq!(q.artist, Some("The Beatles".to_string()));
+        assert_eq!(q.album, None);
+
+        // Test with track number inside components
+        let q2 = parse_track_info("01 - The Beatles - Yesterday.wav", None, None, None);
+        assert_eq!(q2.title, "Yesterday");
+        assert_eq!(q2.artist, Some("The Beatles".to_string()));
+
+        // Test "Artist - Album - Title" format
+        let q3 = parse_track_info("Beatles - Help - 03 - Yesterday.flac", None, None, None);
+        assert_eq!(q3.title, "Yesterday");
+        assert_eq!(q3.artist, Some("Beatles".to_string()));
+        assert_eq!(q3.album, Some("Help".to_string()));
+    }
+
+    #[test]
+    fn test_parse_track_info_db_priority() {
+        // Verify database metadata overrides filename parsing
+        let q = parse_track_info(
+            "02 - unknown_file_name.mp3",
+            Some("Yesterday"),
+            Some("The Beatles"),
+            Some("Help")
+        );
+        assert_eq!(q.title, "Yesterday");
+        assert_eq!(q.artist, Some("The Beatles".to_string()));
+        assert_eq!(q.album, Some("Help".to_string()));
+    }
+
+    #[test]
+    fn test_levenshtein_distance() {
+        assert_eq!(levenshtein_distance("kitten", "sitting"), 3);
+        assert_eq!(levenshtein_distance("hello", "hello"), 0);
+        assert_eq!(levenshtein_distance("", "abc"), 3);
+    }
+
+    #[test]
+    fn test_string_similarity() {
+        // Standard matching
+        let sim = string_similarity("Yesterday", "Yesterday");
+        assert!((sim - 1.0).abs() < 1e-6);
+
+        // Substrings / Remasters
+        let sim_remaster = string_similarity("Yesterday", "Yesterday (2009 Remaster)");
+        assert!(sim_remaster > 0.7);
+
+        // Word order differences should have high token similarity
+        let sim_order = string_similarity("Beatles Yesterday", "Yesterday Beatles");
+        assert!(sim_order > 0.6);
+
+        // Unrelated terms
+        let sim_unrelated = string_similarity("Yesterday", "Tomorrow");
+        assert!(sim_unrelated < 0.3);
+    }
+
+    #[test]
+    fn test_calculate_match_score() {
+        // High confidence match
+        let score = calculate_match_score(
+            "Yesterday",
+            Some("The Beatles"),
+            None,
+            Some(125),
+            "Yesterday (Remastered)",
+            "The Beatles",
+            "Help!",
+            Some(125)
+        );
+        assert!(score >= 0.8);
+
+        // Mismatched artist
+        let score_wrong_artist = calculate_match_score(
+            "Yesterday",
+            Some("The Beatles"),
+            None,
+            Some(125),
+            "Yesterday",
+            "Frank Sinatra",
+            "Sinatra Hits",
+            Some(125)
+        );
+        assert!(score_wrong_artist < 0.6);
+    }
+}
+
+
