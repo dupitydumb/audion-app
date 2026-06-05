@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Play, Pause, Trash2, Search, Music, Disc, AlertCircle, RefreshCw, Heart, Plus } from '@lucide/svelte';
+  import { Play, Pause, Trash2, Search, Music, Disc, AlertCircle, RefreshCw, Heart, Plus, Pencil } from '@lucide/svelte';
 
   let { token, currentPlayingId, isPlaying, likedTrackIds, onPlayTrack, onToggleLike, addToast } = $props<{
     token: string;
@@ -20,6 +20,66 @@
     duration: number | null;
     format: string | null;
     bitrate: number | null;
+    genre?: string | null;
+    track_number?: number | null;
+    disc_number?: number | null;
+  }
+
+  let showEditModal = $state(false);
+  let editingTrack = $state<Track | null>(null);
+  let editTitle = $state('');
+  let editArtist = $state('');
+  let editAlbum = $state('');
+  let editGenre = $state('');
+  let editTrackNumber = $state<number | null>(null);
+  let editDiscNumber = $state<number | null>(null);
+  let isSavingMetadata = $state(false);
+
+  function openEditModal(track: Track) {
+    editingTrack = track;
+    editTitle = track.title || '';
+    editArtist = track.artist || '';
+    editAlbum = track.album || '';
+    editGenre = track.genre || '';
+    editTrackNumber = track.track_number || null;
+    editDiscNumber = track.disc_number || null;
+    showEditModal = true;
+  }
+
+  async function handleSaveMetadata(e: SubmitEvent) {
+    e.preventDefault();
+    if (!editingTrack) return;
+    isSavingMetadata = true;
+    try {
+      const res = await fetch(`/api/tracks/${editingTrack.id}/metadata`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          title: editTitle,
+          artist: editArtist,
+          album: editAlbum,
+          genre: editGenre,
+          track_number: editTrackNumber,
+          disc_number: editDiscNumber
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to update track metadata');
+      }
+
+      const updatedTrack = await res.json();
+      tracks = tracks.map(t => t.id === updatedTrack.id ? updatedTrack : t);
+      addToast('Metadata updated successfully', 'success');
+      showEditModal = false;
+    } catch (err: any) {
+      addToast(err.message || 'Failed to save metadata', 'error');
+    } finally {
+      isSavingMetadata = false;
+    }
   }
 
   interface Playlist {
@@ -307,6 +367,15 @@
                   </div>
 
                   <button 
+                    onclick={() => openEditModal(track)} 
+                    class="btn" 
+                    style="background: transparent; border: none; color: var(--text-muted); padding: 0.25rem;"
+                    title="Edit metadata"
+                  >
+                    <Pencil size={16} class="hover:text-accent" style="transition: color 0.2s;" />
+                  </button>
+
+                  <button 
                     onclick={() => handleDelete(track.id, track.title)} 
                     class="btn" 
                     style="background: transparent; border: none; color: var(--text-muted); padding: 0.25rem;"
@@ -323,6 +392,66 @@
     </div>
   {/if}
 </div>
+
+{#if showEditModal}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="modal-backdrop" onclick={() => showEditModal = false}>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="modal-content glass-card" onclick={(e) => e.stopPropagation()}>
+      <h2 style="font-family: var(--font-heading); font-size: 1.3rem; font-weight: 600; margin-bottom: 1.5rem; color: var(--text-primary);">Edit Metadata</h2>
+      
+      <form onsubmit={handleSaveMetadata}>
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+          <div class="form-group" style="grid-column: span 2;">
+            <label class="form-label" for="edit-title">Title</label>
+            <input type="text" id="edit-title" class="form-input" style="width: 100%;" bind:value={editTitle} />
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label" for="edit-artist">Artist</label>
+            <input type="text" id="edit-artist" class="form-input" style="width: 100%;" bind:value={editArtist} />
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label" for="edit-album">Album</label>
+            <input type="text" id="edit-album" class="form-input" style="width: 100%;" bind:value={editAlbum} />
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label" for="edit-genre">Genre</label>
+            <input type="text" id="edit-genre" class="form-input" style="width: 100%;" bind:value={editGenre} />
+          </div>
+          
+          <div class="form-group" style="display: flex; gap: 1rem;">
+            <div style="flex: 1;">
+              <label class="form-label" for="edit-track">Track #</label>
+              <input type="number" id="edit-track" class="form-input" style="width: 100%;" bind:value={editTrackNumber} />
+            </div>
+            <div style="flex: 1;">
+              <label class="form-label" for="edit-disc">Disc #</label>
+              <input type="number" id="edit-disc" class="form-input" style="width: 100%;" bind:value={editDiscNumber} />
+            </div>
+          </div>
+        </div>
+        
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+          <button type="button" class="btn btn-secondary" onclick={() => showEditModal = false} disabled={isSavingMetadata}>
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-primary" style="display: flex; gap: 0.5rem; align-items: center;" disabled={isSavingMetadata}>
+            {#if isSavingMetadata}
+              <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite;" /> Saving...
+            {:else}
+              Save Changes
+            {/if}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
 
 <style>
   @keyframes spin {
@@ -389,5 +518,31 @@
   .dropdown-item:hover {
     background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
+  }
+
+  .hover\:text-accent:hover {
+    color: var(--accent) !important;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal-content {
+    width: 100%;
+    max-width: 500px;
+    padding: 2rem;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
   }
 </style>

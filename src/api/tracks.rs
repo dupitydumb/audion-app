@@ -450,3 +450,193 @@ pub async fn get_track_lyrics(
     Ok(Json(LyricsResponse { lyrics }))
 }
 
+#[derive(Deserialize)]
+pub struct UpdateMetadataRequest {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub genre: Option<String>,
+    pub track_number: Option<i32>,
+    pub disc_number: Option<i32>,
+}
+
+pub async fn update_track_metadata(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(payload): Json<UpdateMetadataRequest>,
+) -> Result<Json<TrackResponse>, (StatusCode, String)> {
+    // Fetch current track details
+    let current_track = sqlx::query("SELECT id, album_id, album, artist, path FROM tracks WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Track not found".to_string()))?;
+
+    let old_album_id: Option<i64> = current_track.get("album_id");
+    let old_album_name: Option<String> = current_track.get("album");
+    let old_artist: Option<String> = current_track.get("artist");
+    let relative_path: String = current_track.get("path");
+
+    // Handle Album ID updates if album name changes
+    let mut new_album_id = old_album_id;
+    if let Some(ref new_album_name) = payload.album {
+        let name_changed = Some(new_album_name) != old_album_name.as_ref();
+        if name_changed {
+            if new_album_name.trim().is_empty() {
+                new_album_id = None;
+            } else {
+                let existing = sqlx::query("SELECT id FROM albums WHERE name = ?")
+                    .bind(new_album_name)
+                    .fetch_optional(&state.pool)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+                if let Some(alb) = existing {
+                    new_album_id = Some(alb.get::<i64, _>("id"));
+                } else {
+                    let res = sqlx::query("INSERT INTO albums (name, artist) VALUES (?, ?)")
+                        .bind(new_album_name)
+                        .bind(&payload.artist.as_ref().or(old_artist.as_ref()))
+                        .execute(&state.pool)
+                        .await
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                    new_album_id = Some(res.last_insert_rowid());
+                }
+            }
+        }
+    }
+
+    // Update database row
+    sqlx::query(
+        "UPDATE tracks
+         SET title = ?, artist = ?, album = ?, album_id = ?, genre = ?, track_number = ?, disc_number = ?
+         WHERE id = ?"
+    )
+    .bind(&payload.title)
+    .bind(&payload.artist)
+    .bind(&payload.album)
+    .bind(new_album_id)
+    .bind(&payload.genre)
+    .bind(payload.track_number)
+    .bind(payload.disc_number)
+    .bind(id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Clean up old empty albums
+    if let Some(o_alb_id) = old_album_id {
+        if Some(o_alb_id) != new_album_id {
+            let tracks_left: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM tracks WHERE album_id = ?")
+                .bind(o_alb_id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap_or(0);
+
+            if tracks_left == 0 {
+                let art_path_opt: Option<String> = sqlx::query_scalar("SELECT art_path FROM albums WHERE id = ?")
+                    .bind(o_alb_id)
+                    .fetch_one(&state.pool)
+                    .await
+                    .unwrap_or(None);
+
+                if let Some(art_path) = art_path_opt {
+                    let full_art_path = state.config.data_dir.join(art_path);
+                    if full_art_path.exists() {
+                        let _ = std::fs::remove_file(full_art_path);
+                    }
+                }
+
+                sqlx::query("DELETE FROM albums WHERE id = ?")
+                    .bind(o_alb_id)
+                    .execute(&state.pool)
+                    .await
+                    .ok();
+            }
+        }
+    }
+
+    // Try writing tags to physical file using lofty
+    let full_path = state.config.data_dir.join(&relative_path);
+    let payload_title = payload.title.clone();
+    let payload_artist = payload.artist.clone();
+    let payload_album = payload.album.clone();
+    let payload_genre = payload.genre.clone();
+    let payload_track_number = payload.track_number;
+    let payload_disc_number = payload.disc_number;
+
+    tokio::task::spawn_blocking(move || {
+        if full_path.exists() {
+            use lofty::prelude::*;
+            if let Ok(mut tagged_file) = lofty::probe::Probe::open(&full_path)
+                .and_then(|p| p.options(lofty::config::ParseOptions::new().parsing_mode(lofty::config::ParsingMode::Relaxed)).read()) 
+            {
+                let tag = if tagged_file.primary_tag().is_some() {
+                    tagged_file.primary_tag_mut()
+                } else {
+                    tagged_file.first_tag_mut()
+                };
+                if let Some(tag) = tag {
+                    if let Some(t) = payload_title {
+                        tag.insert_text(lofty::tag::ItemKey::TrackTitle, t);
+                    }
+                    if let Some(a) = payload_artist {
+                        tag.insert_text(lofty::tag::ItemKey::TrackArtist, a);
+                    }
+                    if let Some(al) = payload_album {
+                        tag.insert_text(lofty::tag::ItemKey::AlbumTitle, al);
+                    }
+                    if let Some(g) = payload_genre {
+                        tag.insert_text(lofty::tag::ItemKey::Genre, g);
+                    }
+                    if let Some(tr) = payload_track_number {
+                        tag.insert_text(lofty::tag::ItemKey::TrackNumber, tr.to_string());
+                    }
+                    if let Some(ds) = payload_disc_number {
+                        tag.insert_text(lofty::tag::ItemKey::DiscNumber, ds.to_string());
+                    }
+                    let _ = tag.save_to_path(&full_path, lofty::config::WriteOptions::default());
+                }
+            }
+        }
+    });
+
+    // Fetch the updated track
+    let track = sqlx::query_as::<_, TrackResponse>(
+        "SELECT id, path, title, artist, album, track_number, disc_number, duration,
+                album_id, format, bitrate, source_type, cover_url, external_id,
+                local_src, track_cover_path, genre, metadata_json, date_added
+         FROM tracks
+         WHERE id = ?"
+    )
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Broadcast track.updated
+    let payload_val = serde_json::to_value(&track).unwrap_or(serde_json::Value::Null);
+    let payload_str = payload_val.to_string();
+    let event_type = "track.updated";
+
+    if let Ok(er) = sqlx::query("INSERT INTO events (event_type, payload) VALUES (?, ?)")
+        .bind(event_type)
+        .bind(&payload_str)
+        .execute(&state.pool)
+        .await
+    {
+        let event_id = er.last_insert_rowid();
+        state.event_bus.broadcast(ServerEvent {
+            id: event_id,
+            event_type: event_type.to_string(),
+            payload: payload_val,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
+    Ok(Json(track))
+}
+
+

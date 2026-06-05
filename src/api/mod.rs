@@ -7,6 +7,7 @@ pub mod liked;
 pub mod search;
 pub mod stream;
 pub mod events;
+pub mod library;
 
 use axum::{
     routing::{get, post, put, delete},
@@ -52,8 +53,16 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/server-info", get(server_info))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/profile", put(auth::update_profile))
         .route("/api/tracks", get(tracks::get_tracks).post(tracks::upload_track))
         .route("/api/tracks/:id", get(tracks::get_track_by_id).delete(tracks::delete_track))
+        .route("/api/tracks/:id/metadata", put(tracks::update_track_metadata))
+        .route("/api/library/scan", post(library::start_scan))
+        .route("/api/library/scan-status", get(library::get_scan_status))
+        .route("/api/library/fetch", post(library::start_metadata_fetcher))
+        .route("/api/library/fetch-status", get(library::get_fetch_status))
+        .route("/api/library/clean", post(library::clean_library))
+        .route("/api/library/reset", post(library::reset_library))
         .route("/api/albums", get(albums::get_albums))
         .route("/api/albums/:id", get(albums::get_album_by_id))
         .route("/api/albums/:id/tracks", get(albums::get_album_tracks))

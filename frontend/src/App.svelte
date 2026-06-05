@@ -131,9 +131,53 @@
     }
   }
 
+  let scanStatus = $state({
+    isScanning: false,
+    filesScanned: 0,
+    totalFiles: 0,
+    currentFile: ''
+  });
+
+  let fetcherStatus = $state({
+    isRunning: false,
+    tracksProcessed: 0,
+    totalTracks: 0,
+    currentTrack: '',
+    logs: [] as string[]
+  });
+
+  async function fetchLibraryStatuses() {
+    if (!token) return;
+    try {
+      const scanRes = await fetch('/api/library/scan-status', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (scanRes.ok) {
+        const data = await scanRes.json();
+        scanStatus.isScanning = data.is_scanning;
+        scanStatus.filesScanned = data.files_scanned;
+        scanStatus.totalFiles = data.total_files;
+        scanStatus.currentFile = data.current_file;
+      }
+
+      const fetchRes = await fetch('/api/library/fetch-status', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (fetchRes.ok) {
+        const data = await fetchRes.json();
+        fetcherStatus.isRunning = data.is_running;
+        fetcherStatus.tracksProcessed = data.tracks_processed;
+        fetcherStatus.totalTracks = data.total_tracks;
+        fetcherStatus.currentTrack = data.current_track;
+        fetcherStatus.logs = data.logs || [];
+      }
+    } catch (e) {}
+  }
+
   $effect(() => {
     if (token) {
       fetchLikedTrackIds();
+      fetchLibraryStatuses();
     }
   });
 
@@ -189,6 +233,68 @@
         }
       } catch (err) {
         // Ignore
+      }
+    });
+
+    es.addEventListener('scan.started', (e: any) => {
+      try {
+        const data = JSON.parse(e.data).payload;
+        scanStatus.isScanning = true;
+        scanStatus.totalFiles = data.total_files;
+        scanStatus.filesScanned = 0;
+        scanStatus.currentFile = '';
+        addToast('Music folder scan started', 'info');
+      } catch (err) {}
+    });
+
+    es.addEventListener('scan.progress', (e: any) => {
+      try {
+        const data = JSON.parse(e.data).payload;
+        scanStatus.isScanning = data.is_scanning;
+        scanStatus.filesScanned = data.files_scanned;
+        scanStatus.totalFiles = data.total_files;
+        scanStatus.currentFile = data.current_file;
+      } catch (err) {}
+    });
+
+    es.addEventListener('scan.completed', (e: any) => {
+      try {
+        const data = JSON.parse(e.data).payload;
+        scanStatus.isScanning = false;
+        scanStatus.filesScanned = data.files_scanned;
+        scanStatus.totalFiles = data.total_files;
+        scanStatus.currentFile = '';
+        addToast('Music folder scan completed successfully!', 'success');
+      } catch (err) {}
+    });
+
+    es.addEventListener('fetch.progress', (e: any) => {
+      try {
+        const data = JSON.parse(e.data).payload;
+        fetcherStatus.isRunning = data.is_running;
+        fetcherStatus.tracksProcessed = data.tracks_processed;
+        fetcherStatus.totalTracks = data.total_tracks;
+        fetcherStatus.currentTrack = data.current_track;
+        fetcherStatus.logs = data.logs || [];
+      } catch (err) {}
+    });
+
+    es.addEventListener('fetch.completed', (e: any) => {
+      try {
+        const data = JSON.parse(e.data).payload;
+        fetcherStatus.isRunning = false;
+        fetcherStatus.tracksProcessed = data.tracks_processed;
+        fetcherStatus.totalTracks = data.total_tracks;
+        fetcherStatus.currentTrack = '';
+        fetcherStatus.logs = data.logs || [];
+        addToast('Metadata auto-fetcher worker completed!', 'success');
+      } catch (err) {}
+    });
+
+    es.addEventListener('library.reset', () => {
+      addToast('Library has been reset.', 'info');
+      if (['dashboard', 'library', 'albums', 'artists', 'playlists', 'liked'].includes(activeTab)) {
+        window.location.reload();
       }
     });
 
@@ -336,6 +442,13 @@
     localStorage.setItem('audion_admin_token', newToken);
     localStorage.setItem('audion_admin_username', newUsername);
     activeTab = 'dashboard';
+  }
+
+  function handleProfileUpdate(newToken: string, newUsername: string) {
+    token = newToken;
+    username = newUsername;
+    localStorage.setItem('audion_admin_token', newToken);
+    localStorage.setItem('audion_admin_username', newUsername);
   }
 
   function handleLogout() {
@@ -627,7 +740,12 @@
           class="nav-item {activeTab === 'library' ? 'active' : ''}"
         >
           <LibraryIcon size={18} />
-          <span class="nav-text">Library Manager</span>
+          <span class="nav-text" style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+            Library Manager
+            {#if scanStatus.isScanning || fetcherStatus.isRunning}
+              <RefreshCw size={12} class="animate-spin" style="animation: spin 1s linear infinite; color: var(--accent); margin-left: 0.5rem;" />
+            {/if}
+          </span>
         </button>
 
         <button 
@@ -791,7 +909,15 @@
       {:else if activeTab === 'started'}
         <GettingStarted {addToast} />
       {:else if activeTab === 'settings'}
-        <Settings {username} onLogout={handleLogout} />
+        <Settings 
+          {token} 
+          {username} 
+          {scanStatus} 
+          {fetcherStatus} 
+          onLogout={handleLogout} 
+          {addToast} 
+          onProfileUpdate={handleProfileUpdate} 
+        />
       {/if}
     </main>
 
