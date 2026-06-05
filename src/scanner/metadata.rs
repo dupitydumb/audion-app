@@ -124,13 +124,27 @@ pub fn extract_metadata(path: &str) -> Option<TrackMetadata> {
 
     match tag {
         Some(tag) => {
-            let title = tag
-                .title()
-                .map(|s| s.to_string())
+            let get_non_empty = |value: Option<&str>| {
+                value.and_then(|s| {
+                    let trimmed = s.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                })
+            };
+
+            let title = get_non_empty(tag.title())
+                .or_else(|| get_non_empty(tag.get_string(&ItemKey::TrackTitle)))
                 .or_else(|| get_filename_without_ext(path));
-            let artist = tag.artist().map(|s| s.to_string());
-            let album = tag.album().map(|s| s.to_string());
-            let genre = tag.genre().map(|s| s.to_string());
+            let artist = get_non_empty(tag.artist())
+                .or_else(|| get_non_empty(tag.get_string(&ItemKey::TrackArtist)))
+                .or_else(|| get_non_empty(tag.get_string(&ItemKey::AlbumArtist)));
+            let album = get_non_empty(tag.album())
+                .or_else(|| get_non_empty(tag.get_string(&ItemKey::AlbumTitle)));
+            let genre = get_non_empty(tag.genre())
+                .or_else(|| get_non_empty(tag.get_string(&ItemKey::Genre)));
 
             let track_number = tag.track().map(|n| n as i32).or_else(|| {
                 tag.get_string(&ItemKey::TrackNumber).and_then(|s| {
