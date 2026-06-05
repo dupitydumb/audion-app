@@ -23,6 +23,7 @@
     genre?: string | null;
     track_number?: number | null;
     disc_number?: number | null;
+    metadata_json?: string | null;
   }
 
   let showEditModal = $state(false);
@@ -34,6 +35,17 @@
   let editTrackNumber = $state<number | null>(null);
   let editDiscNumber = $state<number | null>(null);
   let isSavingMetadata = $state(false);
+  let showFullMetadata = $state(false);
+
+  let parsedMetadata = $derived.by(() => {
+    if (!editingTrack || !editingTrack.metadata_json) return [];
+    try {
+      const obj = JSON.parse(editingTrack.metadata_json);
+      return Object.entries(obj).map(([key, val]) => ({ key, value: String(val) }));
+    } catch (e) {
+      return [];
+    }
+  });
 
   function openEditModal(track: Track) {
     editingTrack = track;
@@ -43,6 +55,7 @@
     editGenre = track.genre || '';
     editTrackNumber = track.track_number || null;
     editDiscNumber = track.disc_number || null;
+    showFullMetadata = false;
     showEditModal = true;
   }
 
@@ -436,6 +449,35 @@
           </div>
         </div>
         
+        {#if parsedMetadata.length > 0}
+          <div style="margin-bottom: 1.5rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+            <button 
+              type="button" 
+              class="btn" 
+              style="width: 100%; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.85rem; color: var(--text-secondary);"
+              onclick={() => showFullMetadata = !showFullMetadata}
+            >
+              <span>All Audio Metadata ({parsedMetadata.length} fields)</span>
+              <span>{showFullMetadata ? '▼' : '▶'}</span>
+            </button>
+            
+            {#if showFullMetadata}
+              <div class="metadata-scroll-container" style="max-height: 150px; overflow-y: auto; margin-top: 0.5rem; border: 1px solid var(--border-color); border-radius: 4px; background: rgba(0,0,0,0.2); font-size: 0.8rem; font-family: monospace;">
+                <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                  <tbody>
+                    {#each parsedMetadata as item}
+                      <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);">
+                        <td style="padding: 0.4rem 0.6rem; color: var(--text-muted); font-weight: 600; width: 40%; vertical-align: top; word-break: break-all;">{item.key}</td>
+                        <td style="padding: 0.4rem 0.6rem; color: var(--text-primary); vertical-align: top; word-break: break-all;">{item.value}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
         <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
           <button type="button" class="btn btn-secondary" onclick={() => showEditModal = false} disabled={isSavingMetadata}>
             Cancel

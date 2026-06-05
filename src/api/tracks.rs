@@ -467,7 +467,7 @@ pub async fn update_track_metadata(
     Json(payload): Json<UpdateMetadataRequest>,
 ) -> Result<Json<TrackResponse>, (StatusCode, String)> {
     // Fetch current track details
-    let current_track = sqlx::query("SELECT id, album_id, album, artist, path FROM tracks WHERE id = ?")
+    let current_track = sqlx::query("SELECT id, album_id, album, artist, path, metadata_json FROM tracks WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.pool)
         .await
@@ -478,6 +478,7 @@ pub async fn update_track_metadata(
     let old_album_name: Option<String> = current_track.get("album");
     let old_artist: Option<String> = current_track.get("artist");
     let relative_path: String = current_track.get("path");
+    let old_metadata_json: Option<String> = current_track.get("metadata_json");
 
     // Handle Album ID updates if album name changes
     let mut new_album_id = old_album_id;
@@ -508,10 +509,40 @@ pub async fn update_track_metadata(
         }
     }
 
+    // Merge changes into metadata_json
+    let mut metadata_map = old_metadata_json
+        .and_then(|s| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&s).ok())
+        .unwrap_or_default();
+
+    if let Some(ref t) = payload.title {
+        metadata_map.insert("TrackTitle".to_string(), serde_json::Value::String(t.clone()));
+    }
+    if let Some(ref a) = payload.artist {
+        metadata_map.insert("TrackArtist".to_string(), serde_json::Value::String(a.clone()));
+    }
+    if let Some(ref al) = payload.album {
+        metadata_map.insert("AlbumTitle".to_string(), serde_json::Value::String(al.clone()));
+    }
+    if let Some(ref g) = payload.genre {
+        metadata_map.insert("Genre".to_string(), serde_json::Value::String(g.clone()));
+    }
+    if let Some(tr) = payload.track_number {
+        metadata_map.insert("TrackNumber".to_string(), serde_json::Value::String(tr.to_string()));
+    }
+    if let Some(ds) = payload.disc_number {
+        metadata_map.insert("DiscNumber".to_string(), serde_json::Value::String(ds.to_string()));
+    }
+
+    let new_metadata_json = if metadata_map.is_empty() {
+        None
+    } else {
+        serde_json::to_string(&metadata_map).ok()
+    };
+
     // Update database row
     sqlx::query(
         "UPDATE tracks
-         SET title = ?, artist = ?, album = ?, album_id = ?, genre = ?, track_number = ?, disc_number = ?
+         SET title = ?, artist = ?, album = ?, album_id = ?, genre = ?, track_number = ?, disc_number = ?, metadata_json = ?
          WHERE id = ?"
     )
     .bind(&payload.title)
@@ -521,6 +552,7 @@ pub async fn update_track_metadata(
     .bind(&payload.genre)
     .bind(payload.track_number)
     .bind(payload.disc_number)
+    .bind(new_metadata_json)
     .bind(id)
     .execute(&state.pool)
     .await

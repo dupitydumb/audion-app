@@ -215,33 +215,18 @@ fn collect_all_metadata(tag: &LoftyTag) -> Option<String> {
     use serde_json::{Map, Value};
     let mut metadata = Map::new();
 
-    let keys = [
-        ItemKey::TrackTitle,
-        ItemKey::TrackArtist,
-        ItemKey::AlbumTitle,
-        ItemKey::AlbumArtist,
-        ItemKey::Composer,
-        ItemKey::Genre,
-        ItemKey::TrackNumber,
-        ItemKey::TrackTotal,
-        ItemKey::DiscNumber,
-        ItemKey::DiscTotal,
-        ItemKey::Year,
-        ItemKey::Bpm,
-        ItemKey::Isrc,
-        ItemKey::Label,
-        ItemKey::CatalogNumber,
-        ItemKey::Comment,
-        ItemKey::Lyrics,
-        ItemKey::Conductor,
-        ItemKey::Language,
-        ItemKey::Publisher,
-        ItemKey::EncoderSettings,
-    ];
+    for item in tag.items() {
+        let key = item.key();
+        let value = item.value();
+        
+        let val_str = match value {
+            lofty::tag::ItemValue::Text(s) => Some(s.clone()),
+            lofty::tag::ItemValue::Locator(s) => Some(s.clone()),
+            lofty::tag::ItemValue::Binary(_) => None,
+        };
 
-    for key in keys {
-        if let Some(val) = tag.get_string(&key) {
-            metadata.insert(format!("{:?}", key), Value::String(val.to_string()));
+        if let Some(val) = val_str {
+            metadata.insert(format!("{:?}", key), Value::String(val));
         }
     }
 
@@ -299,20 +284,30 @@ fn extract_alac_metadata_fallback(path: &Path) -> Option<TrackMetadata> {
     let bitrate = Some(properties.audio_bitrate() as i32).filter(|&b| b > 0);
     let format = Some("ALAC".to_string());
 
-    let ilst = mp4.ilst();
+    let tagged_file: lofty::file::TaggedFile = mp4.into();
+    let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag());
 
-    let title = ilst
-        .and_then(|t| t.title().map(|s| s.to_string()))
+    let get_non_empty = |value: Option<&str>| {
+        value.and_then(|s| {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+    };
+
+    let title = tag.and_then(|t| get_non_empty(t.title().as_deref()))
         .or_else(|| get_filename_without_ext(path));
-    let artist = ilst.and_then(|t| t.artist().map(|s| s.to_string()));
-    let album = ilst.and_then(|t| t.album().map(|s| s.to_string()));
-    let genre = ilst.and_then(|t| t.genre().map(|s| s.to_string()));
-    let track_number = ilst.and_then(|t| t.track()).map(|n| n as i32);
-    let disc_number  = ilst.and_then(|t| t.disk()).map(|n| n as i32);
+    let artist = tag.and_then(|t| get_non_empty(t.artist().as_deref()));
+    let album = tag.and_then(|t| get_non_empty(t.album().as_deref()));
+    let genre = tag.and_then(|t| get_non_empty(t.genre().as_deref()));
+    let track_number = tag.and_then(|t| t.track().map(|n| n as i32));
+    let disc_number  = tag.and_then(|t| t.disk().map(|n| n as i32));
 
-    let album_art = ilst.and_then(|t| {
-        t.pictures().and_then(|mut iter| iter.next())
-            .map(|p: &lofty::picture::Picture| p.data().to_vec())
+    let album_art = tag.and_then(|t| {
+        t.pictures().first().map(|p| p.data().to_vec())
     });
 
     let content_hash = Some(generate_content_hash(
@@ -334,8 +329,8 @@ fn extract_alac_metadata_fallback(path: &Path) -> Option<TrackMetadata> {
         format,
         bitrate,
         content_hash,
-        musicbrainz_recording_id: None,
-        metadata_json: None,
+        musicbrainz_recording_id: tag.and_then(|t| t.get_string(&lofty::tag::ItemKey::MusicBrainzTrackId).map(|s| s.to_string())),
+        metadata_json: tag.and_then(collect_all_metadata),
         genre,
     })
 }
@@ -379,6 +374,48 @@ fn extract_flac_metadata_fallback(path: &Path, _duration_hint: Option<i32>) -> O
                 duration,
             ));
 
+            let musicbrainz_recording_id = vorbis.and_then(|v| {
+                v.get("MUSICBRAINZ_TRACKID")
+                    .or_else(|| v.get("MUSICBRAINZ_RELEASETRACKID"))
+                    .and_then(|ids| ids.first().cloned())
+            });
+
+            let metadata_json = if let Some(v) = vorbis {
+                use serde_json::{Map, Value};
+                let mut map = Map::new();
+                for (key, values) in &v.comments {
+                    if let Some(first_val) = values.first() {
+                        let key_norm = match key.to_uppercase().as_str() {
+                            "TITLE" => "TrackTitle".to_string(),
+                            "ARTIST" => "TrackArtist".to_string(),
+                            "ALBUM" => "AlbumTitle".to_string(),
+                            "ALBUMARTIST" => "AlbumArtist".to_string(),
+                            "COMPOSER" => "Composer".to_string(),
+                            "GENRE" => "Genre".to_string(),
+                            "TRACKNUMBER" => "TrackNumber".to_string(),
+                            "TRACKTOTAL" | "TOTALTRACKS" => "TrackTotal".to_string(),
+                            "DISCNUMBER" => "DiscNumber".to_string(),
+                            "DISCTOTAL" | "TOTALDISCS" => "DiscTotal".to_string(),
+                            "DATE" | "YEAR" => "Year".to_string(),
+                            "BPM" => "Bpm".to_string(),
+                            "ISRC" => "Isrc".to_string(),
+                            "LABEL" | "ORGANIZATION" => "Label".to_string(),
+                            "COMMENT" => "Comment".to_string(),
+                            "LYRICS" | "UNSYNCEDLYRICS" => "Lyrics".to_string(),
+                            _ => key.clone(),
+                        };
+                        map.insert(key_norm, Value::String(first_val.clone()));
+                    }
+                }
+                if map.is_empty() {
+                    None
+                } else {
+                    serde_json::to_string(&map).ok()
+                }
+            } else {
+                None
+            };
+
             Some(TrackMetadata {
                 title,
                 artist,
@@ -391,8 +428,8 @@ fn extract_flac_metadata_fallback(path: &Path, _duration_hint: Option<i32>) -> O
                 format,
                 bitrate: None,
                 content_hash,
-                musicbrainz_recording_id: None,
-                metadata_json: None,
+                musicbrainz_recording_id,
+                metadata_json,
                 genre,
             })
         }

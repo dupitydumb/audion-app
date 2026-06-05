@@ -26,6 +26,7 @@
   let resetText = $state('');
   let isResetting = $state(false);
   let isCleaning = $state(false);
+  let fetcherProvider = $state<'deezer' | 'musicbrainz'>('deezer');
 
   const envs = [
     { name: 'AUDION_ADMIN_USER', desc: 'The administrator username used to access this web UI and sync.', default: 'admin' },
@@ -109,7 +110,11 @@
     try {
       const res = await fetch('/api/library/fetch', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ provider: fetcherProvider })
       });
       if (res.ok) {
         addToast('Background metadata worker started', 'success');
@@ -342,26 +347,41 @@
 
       <!-- Metadata Auto-Fetcher -->
       <div class="glass-card" style="padding: 1.5rem;">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem;">
+        <div style="display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 1.25rem; gap: 1rem; flex-wrap: wrap;">
           <div style="display: flex; align-items: center; gap: 0.5rem;">
             <Database size={20} style="color: var(--accent);" />
-            <h3 style="font-family: var(--font-heading); font-size: 1.15rem; font-weight: 600;">Metadata Auto-Fetcher</h3>
+            <h3 style="font-family: var(--font-heading); font-size: 1.15rem; font-weight: 600; margin: 0;">Metadata Auto-Fetcher</h3>
           </div>
-          <button 
-            onclick={handleStartFetcher} 
-            class="btn btn-primary" 
-            style="display: flex; gap: 0.5rem; align-items: center;"
-            disabled={fetcherStatus.isRunning}
-          >
-            {#if fetcherStatus.isRunning}
-              <RefreshCw size={16} class="animate-spin" style="animation: spin 1s linear infinite;" /> Fetching...
-            {:else}
-              Start Auto-Fetcher
-            {/if}
-          </button>
+          <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <label class="form-label" for="provider-select" style="margin: 0; font-size: 0.85rem; color: var(--text-secondary); white-space: nowrap;">Source:</label>
+              <select 
+                id="provider-select"
+                class="form-input" 
+                bind:value={fetcherProvider}
+                style="padding: 0.35rem 2rem 0.35rem 0.75rem; cursor: pointer; height: auto; font-size: 0.85rem;"
+                disabled={fetcherStatus.isRunning}
+              >
+                <option value="deezer">Deezer (Fast)</option>
+                <option value="musicbrainz">MusicBrainz (Detailed)</option>
+              </select>
+            </div>
+            <button 
+              onclick={handleStartFetcher} 
+              class="btn btn-primary" 
+              style="display: flex; gap: 0.5rem; align-items: center;"
+              disabled={fetcherStatus.isRunning}
+            >
+              {#if fetcherStatus.isRunning}
+                <RefreshCw size={16} class="animate-spin" style="animation: spin 1s linear infinite;" /> Fetching...
+              {:else}
+                Start Auto-Fetcher
+              {/if}
+            </button>
+          </div>
         </div>
         <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 1rem;">
-          Identifies tracks missing tags/metadata in the database and queries the public **Deezer API** to fetch correct titles, artist profiles, album details, and high-resolution cover arts.
+          Identifies tracks missing tags/metadata in the database and queries the selected public API (Deezer or MusicBrainz) to fetch correct titles, artist profiles, album details, genres, track numbers, and high-resolution cover arts.
         </p>
 
         {#if fetcherStatus.isRunning || fetcherStatus.logs.length > 0}
