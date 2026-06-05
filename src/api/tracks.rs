@@ -978,6 +978,24 @@ pub async fn fetch_track_metadata(
     Ok(Json(track))
 }
 
+async fn broadcast_bulk_event(state: &AppState, event_type: &str, payload: serde_json::Value) {
+    let payload_str = payload.to_string();
+    if let Ok(er) = sqlx::query("INSERT INTO events (event_type, payload) VALUES (?, ?)")
+        .bind(event_type)
+        .bind(&payload_str)
+        .execute(&state.pool)
+        .await
+    {
+        let event_id = er.last_insert_rowid();
+        state.event_bus.broadcast(ServerEvent {
+            id: event_id,
+            event_type: event_type.to_string(),
+            payload,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+}
+
 #[derive(Deserialize)]
 pub struct BulkFetchRequest {
     pub track_ids: Vec<i64>,
@@ -989,13 +1007,30 @@ pub async fn bulk_fetch_metadata(
     State(state): State<AppState>,
     Json(payload): Json<BulkFetchRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    for id in payload.track_ids {
+    let total = payload.track_ids.len();
+    for (idx, id) in payload.track_ids.iter().copied().enumerate() {
         if let Err(e) = fetch_track_metadata_inner(&state, id, &payload.provider).await {
             error!("Failed to fetch metadata for track {}: {:?}", id, e);
         }
+        
+        let progress_payload = serde_json::json!({
+            "action": "fetch",
+            "current": idx + 1,
+            "total": total,
+            "track_id": id,
+        });
+        broadcast_bulk_event(&state, "bulk.progress", progress_payload).await;
+
         // Yield execution to avoid rate limits
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
+
+    let completed_payload = serde_json::json!({
+        "action": "fetch",
+        "total": total,
+    });
+    broadcast_bulk_event(&state, "bulk.completed", completed_payload).await;
+
     Ok(StatusCode::OK)
 }
 
@@ -1009,11 +1044,27 @@ pub async fn bulk_delete_tracks(
     State(state): State<AppState>,
     Json(payload): Json<BulkDeleteRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    for id in payload.track_ids {
+    let total = payload.track_ids.len();
+    for (idx, id) in payload.track_ids.iter().copied().enumerate() {
         if let Err(e) = delete_track_inner(&state, id).await {
             error!("Failed to delete track {}: {:?}", id, e);
         }
+        
+        let progress_payload = serde_json::json!({
+            "action": "delete",
+            "current": idx + 1,
+            "total": total,
+            "track_id": id,
+        });
+        broadcast_bulk_event(&state, "bulk.progress", progress_payload).await;
     }
+
+    let completed_payload = serde_json::json!({
+        "action": "delete",
+        "total": total,
+    });
+    broadcast_bulk_event(&state, "bulk.completed", completed_payload).await;
+
     Ok(StatusCode::OK)
 }
 

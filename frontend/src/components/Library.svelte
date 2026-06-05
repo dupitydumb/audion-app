@@ -142,6 +142,37 @@
   let selectedTrackIds = $state<number[]>([]);
   let isProcessingBulk = $state(false);
   let showBulkPlaylistDropdown = $state(false);
+  let eventSource: EventSource | null = null;
+  let bulkProgress = $state<{ current: number; total: number; action: string } | null>(null);
+
+  function connectSSE() {
+    if (!token) return;
+    if (eventSource) {
+      eventSource.close();
+    }
+
+    const es = new EventSource(`/api/events?token=${token}`);
+    eventSource = es;
+
+    es.addEventListener('bulk.progress', (e: any) => {
+      try {
+        const data = JSON.parse(e.data).payload;
+        bulkProgress = {
+          current: data.current,
+          total: data.total,
+          action: data.action
+        };
+      } catch (err) {}
+    });
+
+    es.addEventListener('bulk.completed', () => {
+      bulkProgress = null;
+    });
+
+    es.onerror = () => {
+      setTimeout(connectSSE, 5000);
+    };
+  }
 
   function toggleTrackSelection(trackId: number) {
     if (selectedTrackIds.includes(trackId)) {
@@ -374,6 +405,7 @@
   onMount(() => {
     fetchTracks();
     fetchPlaylists();
+    connectSSE();
 
     const handleGlobalClick = () => {
       openPlaylistDropdownId = null;
@@ -382,6 +414,9 @@
     window.addEventListener('click', handleGlobalClick);
     return () => {
       window.removeEventListener('click', handleGlobalClick);
+      if (eventSource) {
+        eventSource.close();
+      }
     };
   });
 </script>
@@ -686,79 +721,92 @@
 {/if}
 
 {#if selectedTrackIds.length > 0}
-  <div class="bulk-bar-container">
+  <div class="bulk-bar-container" style="min-width: 480px;">
     <div class="bulk-bar-info">
       <span>Selected</span>
       <span class="bulk-bar-badge">{selectedTrackIds.length}</span>
     </div>
-    <div class="bulk-actions-group">
-      <button 
-        type="button" 
-        class="btn-bulk" 
-        onclick={() => handleBulkFetch('musicbrainz')} 
-        disabled={isProcessingBulk}
-      >
-        <RefreshCw size={14} class={isProcessingBulk ? "animate-spin" : ""} style={isProcessingBulk ? "animation: spin 1s linear infinite; margin-right: 0.2rem;" : "margin-right: 0.2rem;"} />
-        Fetch MB
-      </button>
-      <button 
-        type="button" 
-        class="btn-bulk" 
-        onclick={() => handleBulkFetch('deezer')} 
-        disabled={isProcessingBulk}
-      >
-        <RefreshCw size={14} class={isProcessingBulk ? "animate-spin" : ""} style={isProcessingBulk ? "animation: spin 1s linear infinite; margin-right: 0.2rem;" : "margin-right: 0.2rem;"} />
-        Fetch Deezer
-      </button>
-      
-      <div style="position: relative; display: inline-block;">
-        <button 
-          type="button" 
-          class="btn-bulk" 
-          onclick={(e) => { e.stopPropagation(); showBulkPlaylistDropdown = !showBulkPlaylistDropdown; }} 
-          disabled={isProcessingBulk}
-        >
-          <Plus size={14} style="margin-right: 0.2rem;" />
-          Add to Playlist
-        </button>
-        {#if showBulkPlaylistDropdown}
-          <div class="bulk-playlist-menu glass-card">
-            {#if playlists.length === 0}
-              <div style="padding: 0.5rem; font-size: 0.75rem; color: var(--text-muted); text-align: center;">No playlists.</div>
+    <div class="bulk-actions-group" style="flex: 1; display: flex; align-items: center; justify-content: space-between;">
+      {#if isProcessingBulk}
+        <div class="bulk-progress-container">
+          <div class="bulk-progress-text">
+            <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite; margin-right: 0.5rem;" />
+            {#if bulkProgress}
+              {bulkProgress.action === 'delete' ? 'Deleting tracks' : bulkProgress.action === 'playlist' ? 'Adding to playlist' : 'Fetching metadata'} ({bulkProgress.current}/{bulkProgress.total})
             {:else}
-              {#each playlists as pl}
-                <button 
-                  type="button"
-                  onclick={() => handleBulkAddToPlaylist(pl.id)} 
-                  class="dropdown-item"
-                >
-                  {pl.name}
-                </button>
-              {/each}
+              Processing bulk actions...
             {/if}
           </div>
-        {/if}
-      </div>
+          <div class="bulk-progress-bar-bg">
+            <div class="bulk-progress-bar" style="width: {bulkProgress ? (bulkProgress.current / bulkProgress.total) * 100 : 0}%"></div>
+          </div>
+        </div>
+      {:else}
+        <div style="display: flex; gap: 0.75rem; align-items: center;">
+          <button 
+            type="button" 
+            class="btn-bulk" 
+            onclick={() => handleBulkFetch('musicbrainz')} 
+          >
+            <RefreshCw size={14} style="margin-right: 0.2rem;" />
+            Fetch MB
+          </button>
+          <button 
+            type="button" 
+            class="btn-bulk" 
+            onclick={() => handleBulkFetch('deezer')} 
+          >
+            <RefreshCw size={14} style="margin-right: 0.2rem;" />
+            Fetch Deezer
+          </button>
+          
+          <div style="position: relative; display: inline-block;">
+            <button 
+              type="button" 
+              class="btn-bulk" 
+              onclick={(e) => { e.stopPropagation(); showBulkPlaylistDropdown = !showBulkPlaylistDropdown; }} 
+            >
+              <Plus size={14} style="margin-right: 0.2rem;" />
+              Add to Playlist
+            </button>
+            {#if showBulkPlaylistDropdown}
+              <div class="bulk-playlist-menu glass-card">
+                {#if playlists.length === 0}
+                  <div style="padding: 0.5rem; font-size: 0.75rem; color: var(--text-muted); text-align: center;">No playlists.</div>
+                {:else}
+                  {#each playlists as pl}
+                    <button 
+                      type="button"
+                      onclick={() => handleBulkAddToPlaylist(pl.id)} 
+                      class="dropdown-item"
+                    >
+                      {pl.name}
+                    </button>
+                  {/each}
+                {/if}
+              </div>
+            {/if}
+          </div>
 
-      <button 
-        type="button" 
-        class="btn-bulk btn-bulk-danger" 
-        onclick={handleBulkDelete} 
-        disabled={isProcessingBulk}
-      >
-        <Trash2 size={14} style="margin-right: 0.2rem;" />
-        Delete Selected
-      </button>
-      
-      <button 
-        type="button" 
-        class="btn-bulk" 
-        onclick={clearSelection} 
-        disabled={isProcessingBulk}
-        style="border: none; background: transparent;"
-      >
-        Cancel
-      </button>
+          <button 
+            type="button" 
+            class="btn-bulk btn-bulk-danger" 
+            onclick={handleBulkDelete} 
+          >
+            <Trash2 size={14} style="margin-right: 0.2rem;" />
+            Delete Selected
+          </button>
+          
+          <button 
+            type="button" 
+            class="btn-bulk" 
+            onclick={clearSelection} 
+            style="border: none; background: transparent;"
+          >
+            Cancel
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -950,5 +998,37 @@
     overflow-y: auto;
     z-index: 950;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Bulk progress styles */
+  .bulk-progress-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-width: 250px;
+    flex: 1;
+    margin-right: 1.5rem;
+  }
+
+  .bulk-progress-text {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+  }
+
+  .bulk-progress-bar-bg {
+    width: 100%;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .bulk-progress-bar {
+    height: 100%;
+    background: var(--accent, #a855f7);
+    border-radius: 3px;
+    transition: width 0.25s ease-out;
   }
 </style>

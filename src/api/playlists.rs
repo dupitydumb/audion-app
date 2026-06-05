@@ -446,9 +446,10 @@ pub async fn bulk_add_tracks_to_playlist(
 
     let mut next_pos = max_pos + 1;
     let mut added_any = false;
+    let total = payload.track_ids.len();
 
     // 4. Loop over all requested tracks
-    for track_id in payload.track_ids {
+    for (idx, track_id) in payload.track_ids.iter().copied().enumerate() {
         // Check if track is already in playlist
         let already_in = sqlx::query(
             "SELECT position FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?"
@@ -460,6 +461,13 @@ pub async fn bulk_add_tracks_to_playlist(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         if already_in.is_some() {
+            let progress_payload = serde_json::json!({
+                "action": "playlist",
+                "current": idx + 1,
+                "total": total,
+                "track_id": track_id,
+            });
+            log_and_broadcast_event(&state, "bulk.progress", progress_payload).await;
             continue;
         }
 
@@ -476,6 +484,14 @@ pub async fn bulk_add_tracks_to_playlist(
 
         next_pos += 1;
         added_any = true;
+
+        let progress_payload = serde_json::json!({
+            "action": "playlist",
+            "current": idx + 1,
+            "total": total,
+            "track_id": track_id,
+        });
+        log_and_broadcast_event(&state, "bulk.progress", progress_payload).await;
     }
 
     // 5. Commit transaction
@@ -488,6 +504,12 @@ pub async fn bulk_add_tracks_to_playlist(
             serde_json::json!({ "id": id })
         ).await;
     }
+
+    let completed_payload = serde_json::json!({
+        "action": "playlist",
+        "total": total,
+    });
+    log_and_broadcast_event(&state, "bulk.completed", completed_payload).await;
 
     Ok(StatusCode::OK)
 }
