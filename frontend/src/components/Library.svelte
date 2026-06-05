@@ -455,7 +455,13 @@
       <span style="font-weight: 500;">No tracks found matching your search.</span>
       <p style="font-size: 0.85rem; color: var(--text-muted);">Try uploading files to add them to your library.</p>
     </div>
-  {:else}
+    {:else}
+    {#if tracks.length > 0 && selectedTrackIds.length === 0}
+      <div class="bulk-hint" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; margin-bottom: 1rem; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 8px; font-size: 0.8rem; color: var(--text-muted);">
+        <AlertCircle size={14} />
+        <span>Select tracks using the checkboxes to perform bulk actions like metadata fetching, playlist adding, or deletion.</span>
+      </div>
+    {/if}
     <div style="overflow-x: auto;">
       <table class="library-table" style="font-size: 0.95rem;">
         <thead>
@@ -905,9 +911,9 @@
   }
 
   /* Bulk Actions Floating Bar */
-  .bulk-bar-container {
+    .bulk-bar-container {
     position: fixed;
-    bottom: 2rem;
+    bottom: calc(2rem + var(--player-height));
     left: 50%;
     transform: translateX(-50%);
     z-index: 900;
@@ -916,6 +922,9 @@
     gap: 1.25rem;
     padding: 0.85rem 1.75rem;
     border-radius: 100px;
+    max-width: calc(100vw - 2rem);
+    flex-wrap: wrap;
+    justify-content: center;
     background: rgba(18, 18, 22, 0.85);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { slide } from 'svelte/transition';
   import { 
     LayoutDashboard, 
     UploadCloud, 
@@ -922,6 +923,16 @@
       {/if}
     </main>
 
+        <!-- Transcoding Status Bar -->
+    {#if isTranscoding && playingTrack}
+      <div class="transcoding-bar" in:slide={{ y: 20, duration: 300 }}>
+        <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite;" />
+        <span>Converting FLAC to MP3 for streaming...</span>
+        <span class="transcoding-track">{playingTrack.title}</span>
+        <span style="margin-left: auto; font-size: 0.75rem; opacity: 0.7;">This may take a moment</span>
+      </div>
+    {/if}
+
     <!-- Global Audio Player for preview -->
     {#if playingTrack}
       <div class="mini-player">
@@ -991,17 +1002,15 @@
 
             <button 
               onclick={togglePlay} 
-              class="btn" 
-              style="background: #ffffff; border: none; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; color: #000000; cursor: pointer; transition: transform 0.1s;"
-              onmouseenter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
-              onmouseleave={(e) => e.currentTarget.style.transform = 'scale(1.0)'}
+              class="btn-play-pause"
+              title={isPlaying ? "Pause" : "Play"}
             >
               {#if isBuffering}
-                <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite;" />
+                <RefreshCw size={18} class="animate-spin" style="animation: spin 1s linear infinite;" />
               {:else if isPlaying}
-                <Pause size={14} fill="currentColor" />
+                <Pause size={18} fill="currentColor" />
               {:else}
-                <Play size={14} fill="currentColor" style="margin-left: 2px;" />
+                <Play size={18} fill="currentColor" style="margin-left: 2px;" />
               {/if}
             </button>
 
@@ -1183,10 +1192,11 @@
             {#if playingTrack.genre}
               <span class="genre-tag" style="background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.15); color: rgba(255, 255, 255, 0.85);">{playingTrack.genre}</span>
             {/if}
-            {#if isTranscoding}
-              <span class="converting-badge" style="font-size: 0.75rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.2); border: 1px solid rgba(168, 85, 247, 0.4); padding: 0.15rem 0.5rem; border-radius: 4px; color: rgb(216, 180, 254); font-weight: 600; display: inline-flex; align-items: center; gap: 0.35rem; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;">
-                <RefreshCw size={10} class="animate-spin" style="animation: spin 1s linear infinite;" /> Converting (FFmpeg)
-              </span>
+                        {#if isTranscoding}
+              <div class="fullscreen-transcoding">
+                <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite;" />
+                <span>Converting FLAC to MP3 via FFmpeg...</span>
+              </div>
             {/if}
           </div>
         </div>

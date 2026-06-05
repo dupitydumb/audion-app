@@ -435,19 +435,35 @@ pub async fn get_track_lyrics(
 
             match response {
                 Ok(resp) => {
-                    if resp.status().is_success() {
-                        #[derive(Deserialize)]
-                        #[serde(rename_all = "camelCase")]
-                        struct LrcResponse {
-                            synced_lyrics: Option<String>,
-                            plain_lyrics: Option<String>,
-                        }
+                    #[derive(Deserialize)]
+                    #[serde(rename_all = "camelCase")]
+                    struct LrcResponse {
+                        synced_lyrics: Option<String>,
+                        plain_lyrics: Option<String>,
+                    }
 
+                    if resp.status().is_success() {
                         if let Ok(lrc_data) = resp.json::<LrcResponse>().await {
                             lyrics = lrc_data.synced_lyrics.or(lrc_data.plain_lyrics);
                         }
                     } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
-                        info!("No lyrics found on LRCLIB for: {} - {}", clean_artist, clean_title);
+                        info!("No exact match on LRCLIB for: {} - {}, falling back to search", clean_artist, clean_title);
+                        
+                        let search_req = client.get("https://lrclib.net/api/search")
+                            .query(&[("q", &format!("{} {}", clean_title, clean_artist))])
+                            .timeout(std::time::Duration::from_secs(5))
+                            .send()
+                            .await;
+
+                        if let Ok(search_resp) = search_req {
+                            if search_resp.status().is_success() {
+                                if let Ok(results) = search_resp.json::<Vec<LrcResponse>>().await {
+                                    if let Some(best) = results.into_iter().find(|r| r.synced_lyrics.is_some() || r.plain_lyrics.is_some()) {
+                                        lyrics = best.synced_lyrics.or(best.plain_lyrics);
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         error!("LRCLIB API returned status: {}", resp.status());
                     }
