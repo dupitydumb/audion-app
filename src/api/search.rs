@@ -35,10 +35,11 @@ pub async fn search(
                 album_id, format, bitrate, source_type, cover_url, external_id,
                 local_src, track_cover_path, genre, metadata_json, date_added
          FROM tracks
-         WHERE title LIKE ? OR artist LIKE ? OR album LIKE ?
+         WHERE title LIKE ? OR artist LIKE ? OR album LIKE ? OR genre LIKE ?
          ORDER BY artist, album, disc_number, track_number, title
          LIMIT 50"
     )
+    .bind(&search_pattern)
     .bind(&search_pattern)
     .bind(&search_pattern)
     .bind(&search_pattern)

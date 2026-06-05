@@ -33,6 +33,7 @@
     duration: number | null;
     format: string | null;
     bitrate: number | null;
+    genre?: string | null;
   }
 
   interface Playlist {
@@ -296,9 +297,14 @@
                           />
                           <Music size={14} style="color: var(--text-muted);" />
                         </div>
-                        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;">
-                          {track.title || 'Unknown Title'}
-                        </span>
+                        <div style="display: flex; flex-direction: column; gap: 0.2rem; min-width: 0;">
+                          <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;">
+                            {track.title || 'Unknown Title'}
+                          </span>
+                          {#if track.genre}
+                            <span class="genre-tag">{track.genre}</span>
+                          {/if}
+                        </div>
                       </div>
                     </td>
                     <td style="color: var(--text-secondary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">

@@ -36,6 +36,45 @@
   let editDiscNumber = $state<number | null>(null);
   let isSavingMetadata = $state(false);
   let showFullMetadata = $state(false);
+  let isFetchingSingle = $state<'musicbrainz' | 'deezer' | null>(null);
+
+  async function handleSingleFetch(provider: 'musicbrainz' | 'deezer') {
+    if (!editingTrack) return;
+    isFetchingSingle = provider;
+    try {
+      const res = await fetch(`/api/tracks/${editingTrack.id}/fetch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ provider })
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(errorText || `Failed to fetch metadata from ${provider}`);
+      }
+
+      const updatedTrack = await res.json();
+      
+      editTitle = updatedTrack.title || '';
+      editArtist = updatedTrack.artist || '';
+      editAlbum = updatedTrack.album || '';
+      editGenre = updatedTrack.genre || '';
+      editTrackNumber = updatedTrack.track_number || null;
+      editDiscNumber = updatedTrack.disc_number || null;
+      
+      editingTrack = updatedTrack;
+      tracks = tracks.map(t => t.id === updatedTrack.id ? updatedTrack : t);
+      
+      addToast(`Metadata fetched from ${provider === 'musicbrainz' ? 'MusicBrainz' : 'Deezer'} successfully!`, 'success');
+    } catch (err: any) {
+      addToast(err.message || 'Failed to fetch metadata', 'error');
+    } finally {
+      isFetchingSingle = null;
+    }
+  }
 
   let parsedMetadata = $derived.by(() => {
     if (!editingTrack || !editingTrack.metadata_json) return [];
@@ -321,9 +360,14 @@
                     />
                     <Music size={14} style="color: var(--text-muted);" />
                   </div>
-                  <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;">
-                    {track.title || 'Unknown Title'}
-                  </span>
+                  <div style="display: flex; flex-direction: column; gap: 0.2rem; min-width: 0;">
+                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;">
+                      {track.title || 'Unknown Title'}
+                    </span>
+                    {#if track.genre}
+                      <span class="genre-tag">{track.genre}</span>
+                    {/if}
+                  </div>
                 </div>
               </td>
               <td style="color: var(--text-secondary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
@@ -478,17 +522,35 @@
           </div>
         {/if}
 
-        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
-          <button type="button" class="btn btn-secondary" onclick={() => showEditModal = false} disabled={isSavingMetadata}>
-            Cancel
-          </button>
-          <button type="submit" class="btn btn-primary" style="display: flex; gap: 0.5rem; align-items: center;" disabled={isSavingMetadata}>
-            {#if isSavingMetadata}
-              <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite;" /> Saving...
-            {:else}
-              Save Changes
-            {/if}
-          </button>
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; margin-top: 1.5rem; border-top: 1px solid var(--border-color); padding-top: 1.25rem;">
+          <div style="display: flex; gap: 0.5rem;">
+            <button type="button" class="btn btn-secondary" style="font-size: 0.8rem; padding: 0.45rem 0.75rem;" onclick={() => handleSingleFetch('musicbrainz')} disabled={isSavingMetadata || !!isFetchingSingle}>
+              {#if isFetchingSingle === 'musicbrainz'}
+                <RefreshCw size={12} class="animate-spin" style="animation: spin 1s linear infinite;" /> Fetching MB...
+              {:else}
+                Fetch MusicBrainz
+              {/if}
+            </button>
+            <button type="button" class="btn btn-secondary" style="font-size: 0.8rem; padding: 0.45rem 0.75rem;" onclick={() => handleSingleFetch('deezer')} disabled={isSavingMetadata || !!isFetchingSingle}>
+              {#if isFetchingSingle === 'deezer'}
+                <RefreshCw size={12} class="animate-spin" style="animation: spin 1s linear infinite;" /> Fetching Dz...
+              {:else}
+                Fetch Deezer
+              {/if}
+            </button>
+          </div>
+          <div style="display: flex; gap: 0.75rem;">
+            <button type="button" class="btn btn-secondary" onclick={() => showEditModal = false} disabled={isSavingMetadata || !!isFetchingSingle}>
+              Cancel
+            </button>
+            <button type="submit" class="btn btn-primary" style="display: flex; gap: 0.5rem; align-items: center;" disabled={isSavingMetadata || !!isFetchingSingle}>
+              {#if isSavingMetadata}
+                <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite;" /> Saving...
+              {:else}
+                Save Changes
+              {/if}
+            </button>
+          </div>
         </div>
       </form>
     </div>

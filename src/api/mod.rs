@@ -57,6 +57,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/tracks", get(tracks::get_tracks).post(tracks::upload_track))
         .route("/api/tracks/:id", get(tracks::get_track_by_id).delete(tracks::delete_track))
         .route("/api/tracks/:id/metadata", put(tracks::update_track_metadata))
+        .route("/api/tracks/:id/fetch", post(tracks::fetch_track_metadata))
         .route("/api/library/scan", post(library::start_scan))
         .route("/api/library/scan-status", get(library::get_scan_status))
         .route("/api/library/fetch", post(library::start_metadata_fetcher))

@@ -671,4 +671,261 @@ pub async fn update_track_metadata(
     Ok(Json(track))
 }
 
+#[derive(Deserialize)]
+pub struct SingleFetchRequest {
+    pub provider: String,
+}
+
+pub async fn fetch_track_metadata(
+    _claims: Claims,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(payload): Json<SingleFetchRequest>,
+) -> Result<Json<TrackResponse>, (StatusCode, String)> {
+    // 1. Get track path and metadata from DB
+    let track_row = sqlx::query("SELECT id, path, title, artist, album, duration FROM tracks WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Track not found".to_string()))?;
+
+    let track_path: String = track_row.get("path");
+    let current_title: Option<String> = track_row.get("title");
+
+    let filename = std::path::Path::new(&track_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let target_title = current_title
+        .filter(|t| !t.trim().is_empty() && !t.starts_with("music/"))
+        .unwrap_or(filename);
+    let search_term = crate::api::library::clean_search_term(&target_title);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    if payload.provider == "musicbrainz" {
+        let mb_match = crate::api::library::fetch_musicbrainz_metadata(&client, &search_term)
+            .await
+            .ok_or_else(|| (StatusCode::NOT_FOUND, "No matching metadata found on MusicBrainz".to_string()))?;
+
+        let album_id = crate::api::library::match_or_create_album(&state.pool, &mb_match.album, &mb_match.artist).await;
+        let metadata_json = serde_json::to_string(&mb_match).ok();
+
+        // Update database row
+        sqlx::query(
+            "UPDATE tracks 
+             SET title = ?, artist = ?, album = ?, album_id = ?, track_number = ?, disc_number = ?, genre = ?, external_id = ?, metadata_json = ?,
+                 duration = CASE WHEN duration IS NULL OR duration <= 0 THEN ? ELSE duration END
+             WHERE id = ?"
+        )
+        .bind(&mb_match.title)
+        .bind(&mb_match.artist)
+        .bind(&mb_match.album)
+        .bind(album_id)
+        .bind(mb_match.track_number)
+        .bind(mb_match.disc_number)
+        .bind(&mb_match.genre)
+        .bind(&mb_match.recording_id)
+        .bind(metadata_json)
+        .bind(mb_match.duration)
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        // Fetch cover art if available
+        if let Some(ref release_id) = mb_match.release_id {
+            let cover_url = format!("https://coverartarchive.org/release/{}/front-500", release_id);
+            if let Ok(c_resp) = client.get(&cover_url)
+                .header("User-Agent", "Audion/0.1.0 ( contact@audion.local )")
+                .send()
+                .await
+            {
+                if c_resp.status().is_success() {
+                    if let Ok(bytes) = c_resp.bytes().await {
+                        let relative_cover = format!("artwork/track_{}.jpg", id);
+                        let cover_full = state.config.data_dir.join(&relative_cover);
+                        std::fs::create_dir_all(cover_full.parent().unwrap()).ok();
+                        if std::fs::write(&cover_full, &bytes).is_ok() {
+                            sqlx::query("UPDATE tracks SET track_cover_path = ? WHERE id = ?")
+                                .bind(&relative_cover)
+                                .bind(id)
+                                .execute(&state.pool)
+                                .await
+                                .ok();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Tag writer block (Lofty)
+        let file_full_path = state.config.data_dir.join(&track_path);
+        let t_title = mb_match.title.clone();
+        let t_artist = mb_match.artist.clone();
+        let t_album = mb_match.album.clone();
+        let t_track_number = mb_match.track_number;
+        let t_disc_number = mb_match.disc_number;
+        let t_genre = mb_match.genre.clone();
+        let t_recording_id = mb_match.recording_id.clone();
+
+        tokio::task::spawn_blocking(move || {
+            if file_full_path.exists() {
+                use lofty::prelude::*;
+                if let Ok(mut tagged_file) = lofty::probe::Probe::open(&file_full_path)
+                    .and_then(|p| p.options(lofty::config::ParseOptions::new().parsing_mode(lofty::config::ParsingMode::Relaxed)).read())
+                {
+                    let tag = if tagged_file.primary_tag().is_some() {
+                        tagged_file.primary_tag_mut()
+                    } else {
+                        tagged_file.first_tag_mut()
+                    };
+                    if let Some(tag) = tag {
+                        tag.insert_text(lofty::tag::ItemKey::TrackTitle, t_title);
+                        tag.insert_text(lofty::tag::ItemKey::TrackArtist, t_artist);
+                        tag.insert_text(lofty::tag::ItemKey::AlbumTitle, t_album);
+                        if let Some(tn) = t_track_number {
+                            tag.insert_text(lofty::tag::ItemKey::TrackNumber, tn.to_string());
+                        }
+                        if let Some(dn) = t_disc_number {
+                            tag.insert_text(lofty::tag::ItemKey::DiscNumber, dn.to_string());
+                        }
+                        if let Some(g) = t_genre {
+                            tag.insert_text(lofty::tag::ItemKey::Genre, g);
+                        }
+                        tag.insert_text(lofty::tag::ItemKey::MusicBrainzTrackId, t_recording_id);
+                        let _ = tag.save_to_path(&file_full_path, lofty::config::WriteOptions::default());
+                    }
+                }
+            }
+        });
+    } else {
+        // Deezer fetch
+        let url = "https://api.deezer.com/search";
+        let resp = client.get(url)
+            .query(&[("q", &search_term)])
+            .send()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Deezer request failed: {}", e)))?;
+
+        let search_res = resp.json::<crate::api::library::DeezerSearchResponse>().await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to parse Deezer response: {}", e)))?;
+
+        if search_res.data.is_empty() {
+            return Err((StatusCode::NOT_FOUND, "No matching metadata found on Deezer".to_string()));
+        }
+
+        let match_track = &search_res.data[0];
+        let album_id = crate::api::library::match_or_create_album(&state.pool, &match_track.album.title, &match_track.artist.name).await;
+        let metadata_json = serde_json::to_value(&match_track).ok().map(|v| v.to_string());
+        let ext_id = Some(match_track.id.to_string());
+
+        sqlx::query(
+            "UPDATE tracks 
+             SET title = ?, artist = ?, album = ?, album_id = ?, external_id = ?, metadata_json = ?,
+                 duration = CASE WHEN duration IS NULL OR duration <= 0 THEN ? ELSE duration END
+             WHERE id = ?"
+        )
+        .bind(&match_track.title)
+        .bind(&match_track.artist.name)
+        .bind(&match_track.album.title)
+        .bind(album_id)
+        .bind(ext_id)
+        .bind(metadata_json)
+        .bind(match_track.duration)
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        // Fetch cover art
+        if let Some(ref cover_url) = match_track.album.cover_big {
+            if let Ok(c_resp) = client.get(cover_url).send().await {
+                if c_resp.status().is_success() {
+                    if let Ok(bytes) = c_resp.bytes().await {
+                        let relative_cover = format!("artwork/track_{}.jpg", id);
+                        let cover_full = state.config.data_dir.join(&relative_cover);
+                        std::fs::create_dir_all(cover_full.parent().unwrap()).ok();
+                        if std::fs::write(&cover_full, &bytes).is_ok() {
+                            sqlx::query("UPDATE tracks SET track_cover_path = ? WHERE id = ?")
+                                .bind(&relative_cover)
+                                .bind(id)
+                                .execute(&state.pool)
+                                .await
+                                .ok();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Tag writer block (Lofty)
+        let file_full_path = state.config.data_dir.join(&track_path);
+        let t_title = match_track.title.clone();
+        let t_artist = match_track.artist.name.clone();
+        let t_album = match_track.album.title.clone();
+
+        tokio::task::spawn_blocking(move || {
+            if file_full_path.exists() {
+                use lofty::prelude::*;
+                if let Ok(mut tagged_file) = lofty::probe::Probe::open(&file_full_path)
+                    .and_then(|p| p.options(lofty::config::ParseOptions::new().parsing_mode(lofty::config::ParsingMode::Relaxed)).read())
+                {
+                    let tag = if tagged_file.primary_tag().is_some() {
+                        tagged_file.primary_tag_mut()
+                    } else {
+                        tagged_file.first_tag_mut()
+                    };
+                    if let Some(tag) = tag {
+                        tag.insert_text(lofty::tag::ItemKey::TrackTitle, t_title);
+                        tag.insert_text(lofty::tag::ItemKey::TrackArtist, t_artist);
+                        tag.insert_text(lofty::tag::ItemKey::AlbumTitle, t_album);
+                        let _ = tag.save_to_path(&file_full_path, lofty::config::WriteOptions::default());
+                    }
+                }
+            }
+        });
+    }
+
+    // Get the updated track
+    let track = sqlx::query_as::<_, TrackResponse>(
+        "SELECT id, path, title, artist, album, track_number, disc_number, duration,
+                album_id, format, bitrate, source_type, cover_url, external_id,
+                local_src, track_cover_path, genre, metadata_json, date_added
+         FROM tracks
+         WHERE id = ?"
+    )
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Broadcast track.updated
+    let payload_val = serde_json::to_value(&track).unwrap_or(serde_json::Value::Null);
+    let payload_str = payload_val.to_string();
+    let event_type = "track.updated";
+
+    if let Ok(er) = sqlx::query("INSERT INTO events (event_type, payload) VALUES (?, ?)")
+        .bind(event_type)
+        .bind(&payload_str)
+        .execute(&state.pool)
+        .await
+    {
+        let event_id = er.last_insert_rowid();
+        state.event_bus.broadcast(ServerEvent {
+            id: event_id,
+            event_type: event_type.to_string(),
+            payload: payload_val,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+
+    Ok(Json(track))
+}
+
 

@@ -39,96 +39,99 @@ pub struct FetcherRequest {
     pub provider: Option<String>,
 }
 
-#[derive(Deserialize, Serialize)]
-struct DeezerArtist {
-    name: String,
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct DeezerArtist {
+    pub name: String,
 }
 
-#[derive(Deserialize, Serialize)]
-struct DeezerAlbum {
-    title: String,
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct DeezerAlbum {
+    pub title: String,
     #[serde(rename = "cover_big")]
-    cover_big: Option<String>,
+    pub cover_big: Option<String>,
 }
 
-#[derive(Deserialize, Serialize)]
-struct DeezerTrack {
-    id: i64,
-    title: String,
-    artist: DeezerArtist,
-    album: DeezerAlbum,
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct DeezerTrack {
+    pub id: i64,
+    pub title: String,
+    pub artist: DeezerArtist,
+    pub album: DeezerAlbum,
+    pub duration: Option<i32>,
 }
 
-#[derive(Deserialize, Serialize)]
-struct DeezerSearchResponse {
-    data: Vec<DeezerTrack>,
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct DeezerSearchResponse {
+    pub data: Vec<DeezerTrack>,
 }
 
 // MusicBrainz structs
-#[derive(Deserialize, Debug)]
-struct MbArtist {
-    name: String,
-}
-
-#[derive(Deserialize, Debug)]
-struct MbArtistCredit {
-    artist: MbArtist,
+#[derive(Deserialize, Debug, Clone)]
+pub struct MbArtist {
+    pub name: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-struct MbTrack {
-    number: Option<String>,
+pub struct MbArtistCredit {
+    pub artist: MbArtist,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-struct MbMedia {
+pub struct MbTrack {
+    pub number: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct MbMedia {
     #[serde(rename = "track-count")]
-    _track_count: Option<i32>,
-    tracks: Option<Vec<MbTrack>>,
+    pub _track_count: Option<i32>,
+    pub tracks: Option<Vec<MbTrack>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-struct MbRelease {
-    id: String,
-    title: String,
-    date: Option<String>,
-    media: Option<Vec<MbMedia>>,
+pub struct MbRelease {
+    pub id: String,
+    pub title: String,
+    pub date: Option<String>,
+    pub media: Option<Vec<MbMedia>>,
 }
 
-#[derive(Deserialize, Debug)]
-struct MbTag {
-    name: String,
-    count: i32,
+#[derive(Deserialize, Debug, Clone)]
+pub struct MbTag {
+    pub name: String,
+    pub count: i32,
 }
 
-#[derive(Deserialize, Debug)]
-struct MbRecording {
-    id: String,
-    title: String,
+#[derive(Deserialize, Debug, Clone)]
+pub struct MbRecording {
+    pub id: String,
+    pub title: String,
     #[serde(rename = "artist-credit")]
-    artist_credit: Option<Vec<MbArtistCredit>>,
-    releases: Option<Vec<MbRelease>>,
-    tags: Option<Vec<MbTag>>,
+    pub artist_credit: Option<Vec<MbArtistCredit>>,
+    pub releases: Option<Vec<MbRelease>>,
+    pub tags: Option<Vec<MbTag>>,
+    pub length: Option<i32>,
 }
 
-#[derive(Deserialize, Debug)]
-struct MbSearchResponse {
-    recordings: Vec<MbRecording>,
+#[derive(Deserialize, Debug, Clone)]
+pub struct MbSearchResponse {
+    pub recordings: Vec<MbRecording>,
 }
 
-#[derive(Serialize, Debug)]
-struct MusicBrainzMatch {
-    title: String,
-    artist: String,
-    album: String,
-    track_number: Option<i32>,
-    disc_number: Option<i32>,
-    genre: Option<String>,
-    release_id: Option<String>,
-    recording_id: String,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MusicBrainzMatch {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub track_number: Option<i32>,
+    pub disc_number: Option<i32>,
+    pub genre: Option<String>,
+    pub release_id: Option<String>,
+    pub recording_id: String,
+    pub duration: Option<i32>,
 }
 
-async fn fetch_musicbrainz_metadata(
+pub async fn fetch_musicbrainz_metadata(
     client: &reqwest::Client,
     search_term: &str,
 ) -> Option<MusicBrainzMatch> {
@@ -198,6 +201,8 @@ async fn fetch_musicbrainz_metadata(
                 .map(|t| t.name.clone())
         });
 
+    let duration = recording.length.map(|l| (l / 1000) as i32);
+
     Some(MusicBrainzMatch {
         title,
         artist,
@@ -207,6 +212,7 @@ async fn fetch_musicbrainz_metadata(
         genre,
         release_id,
         recording_id: recording.id.clone(),
+        duration,
     })
 }
 
@@ -555,9 +561,9 @@ pub async fn start_metadata_fetcher(
                         // Serialize full raw response as metadata_json
                         let metadata_json = serde_json::to_string(&mb_match).ok();
 
-                        // Update track metadata in DB (including new fields: track_number, disc_number, genre, external_id, metadata_json)
+                        // Update track metadata in DB (including new fields: track_number, disc_number, genre, external_id, metadata_json, and duration if missing)
                         let update_res = sqlx::query(
-                            "UPDATE tracks SET title = ?, artist = ?, album = ?, album_id = ?, track_number = ?, disc_number = ?, genre = ?, external_id = ?, metadata_json = ? WHERE id = ?"
+                            "UPDATE tracks SET title = ?, artist = ?, album = ?, album_id = ?, track_number = ?, disc_number = ?, genre = ?, external_id = ?, metadata_json = ?, duration = CASE WHEN duration IS NULL OR duration <= 0 THEN ? ELSE duration END WHERE id = ?"
                         )
                         .bind(&mb_match.title)
                         .bind(&mb_match.artist)
@@ -568,6 +574,7 @@ pub async fn start_metadata_fetcher(
                         .bind(&mb_match.genre)
                         .bind(&mb_match.recording_id)
                         .bind(metadata_json)
+                        .bind(mb_match.duration)
                         .bind(track_id)
                         .execute(&pool)
                         .await;
@@ -711,9 +718,9 @@ pub async fn start_metadata_fetcher(
                                     let metadata_json = serde_json::to_value(&match_track).ok().map(|v| v.to_string());
                                     let ext_id = Some(match_track.id.to_string());
 
-                                    // Update track metadata in DB
+                                    // Update track metadata in DB (including duration if missing)
                                     let update_res = sqlx::query(
-                                        "UPDATE tracks SET title = ?, artist = ?, album = ?, album_id = ?, external_id = ?, metadata_json = ? WHERE id = ?"
+                                        "UPDATE tracks SET title = ?, artist = ?, album = ?, album_id = ?, external_id = ?, metadata_json = ?, duration = CASE WHEN duration IS NULL OR duration <= 0 THEN ? ELSE duration END WHERE id = ?"
                                     )
                                     .bind(&match_track.title)
                                     .bind(&match_track.artist.name)
@@ -721,6 +728,7 @@ pub async fn start_metadata_fetcher(
                                     .bind(album_id)
                                     .bind(ext_id)
                                     .bind(metadata_json)
+                                    .bind(match_track.duration)
                                     .bind(track_id)
                                     .execute(&pool)
                                     .await;
@@ -1011,7 +1019,7 @@ fn log_fetcher_message(fetcher_status: &Arc<std::sync::Mutex<FetcherStatus>>, ev
     broadcast_library_event(event_bus, "fetch.progress", payload);
 }
 
-fn clean_search_term(input: &str) -> String {
+pub fn clean_search_term(input: &str) -> String {
     let mut clean = input.replace(".mp3", "")
         .replace(".flac", "")
         .replace(".m4a", "")
@@ -1034,7 +1042,7 @@ fn clean_search_term(input: &str) -> String {
     clean.trim().to_string()
 }
 
-async fn match_or_create_album(pool: &sqlx::SqlitePool, name: &str, artist: &str) -> Option<i64> {
+pub async fn match_or_create_album(pool: &sqlx::SqlitePool, name: &str, artist: &str) -> Option<i64> {
     if name.trim().is_empty() {
         return None;
     }

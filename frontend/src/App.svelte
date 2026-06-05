@@ -188,6 +188,7 @@
     artist: string;
     format?: string | null;
     bitrate?: number | null;
+    genre?: string | null;
   }
   let playingTrack = $state<PlayingTrack | null>(null);
   let isPlaying = $state(false);
@@ -948,6 +949,9 @@
                   {/if}
                 </span>
               {/if}
+              {#if playingTrack.genre}
+                <span class="genre-tag" style="margin-left: 0.25rem;">{playingTrack.genre}</span>
+              {/if}
               {#if isTranscoding}
                 <span class="converting-badge" style="font-size: 0.65rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 0.1rem 0.35rem; border-radius: 4px; color: rgb(216, 180, 254); font-weight: 600; display: inline-flex; align-items: center; gap: 0.25rem;">
                   <RefreshCw size={8} class="animate-spin" style="animation: spin 1s linear infinite;" /> Converting (FFmpeg)
@@ -1176,6 +1180,9 @@
           <div class="fullscreen-title">{playingTrack.title}</div>
           <div style="display: flex; align-items: center; gap: 0.75rem; justify-content: center; margin-top: 0.25rem;">
             <div class="fullscreen-artist" style="margin: 0;">{playingTrack.artist}</div>
+            {#if playingTrack.genre}
+              <span class="genre-tag" style="background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.15); color: rgba(255, 255, 255, 0.85);">{playingTrack.genre}</span>
+            {/if}
             {#if isTranscoding}
               <span class="converting-badge" style="font-size: 0.75rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.2); border: 1px solid rgba(168, 85, 247, 0.4); padding: 0.15rem 0.5rem; border-radius: 4px; color: rgb(216, 180, 254); font-weight: 600; display: inline-flex; align-items: center; gap: 0.35rem; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;">
                 <RefreshCw size={10} class="animate-spin" style="animation: spin 1s linear infinite;" /> Converting (FFmpeg)
