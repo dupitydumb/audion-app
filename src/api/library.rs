@@ -511,9 +511,10 @@ pub fn trigger_auto_scan(state: AppState) -> bool {
 }
 
 pub async fn start_scan(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
     if trigger_auto_scan(state) {
         Ok(StatusCode::ACCEPTED)
     } else {
@@ -522,10 +523,11 @@ pub async fn start_scan(
 }
 
 pub async fn start_metadata_fetcher(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     payload: Option<Json<FetcherRequest>>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
     let mut status = state.fetcher_status.lock().unwrap();
     if status.is_running {
         return Err((StatusCode::CONFLICT, "Metadata fetcher already running".to_string()));
@@ -945,9 +947,10 @@ pub async fn start_metadata_fetcher(
 }
 
 pub async fn clean_library(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
     info!("Pruning orphan records from database library...");
     let tracks = sqlx::query("SELECT id, path, track_cover_path FROM tracks")
         .fetch_all(&state.pool)
@@ -1022,9 +1025,10 @@ pub async fn clean_library(
 }
 
 pub async fn reset_library(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
     info!("Resetting library database...");
 
     sqlx::query("DELETE FROM tracks").execute(&state.pool).await

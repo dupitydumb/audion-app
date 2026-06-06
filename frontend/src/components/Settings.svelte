@@ -390,12 +390,14 @@
         <Users size={16} /> User Management
       </button>
     {/if}
+    {#if role === 'Admin'}
     <button 
       onclick={() => activeTab = 'library'} 
       class="tab-btn {activeTab === 'library' ? 'active' : ''}"
     >
       <FolderSync size={16} /> Library Control
     </button>
+    {/if}
     <button 
       onclick={() => activeTab = 'system'} 
       class="tab-btn {activeTab === 'system' ? 'active' : ''}"
@@ -712,7 +714,7 @@
     </div>
 
   <!-- Library Management Tab -->
-  {:else if activeTab === 'library'}
+  {:else if activeTab === 'library' && role === 'Admin'}
     <div style="display: flex; flex-direction: column; gap: 1.5rem;">
       
       <!-- Scan Music Folder -->

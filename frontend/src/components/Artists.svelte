@@ -2,8 +2,9 @@
   import { onMount } from 'svelte';
   import { Play, Pause, Users, Disc, ArrowLeft, Music, AlertCircle, RefreshCw, Heart, Plus, MoreVertical } from '@lucide/svelte';
 
-  let { token, currentPlayingId, isPlaying, likedTrackIds, onPlayTrack, onToggleLike, addToast, isMobile, openActionSheet } = $props<{
+  let { token, role, currentPlayingId, isPlaying, likedTrackIds, onPlayTrack, onToggleLike, addToast, isMobile, openActionSheet } = $props<{
     token: string;
+    role: string;
     currentPlayingId: number | null;
     isPlaying: boolean;
     likedTrackIds: number[];
@@ -378,6 +379,7 @@
                       </td>
                       <td>
                         <div style="display: flex; justify-content: center; align-items: center; gap: 0.5rem;">
+                          {#if role !== 'StreamOnly'}
                           <button 
                             onclick={() => onToggleLike(track.id)} 
                             class="btn" 
@@ -413,6 +415,7 @@
                               </div>
                             {/if}
                           </div>
+                          {/if}
                         </div>
                       </td>
                     </tr>

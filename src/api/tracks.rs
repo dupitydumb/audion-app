@@ -91,10 +91,11 @@ pub async fn get_track_by_id(
 }
 
 pub async fn upload_track(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<TrackResponse>), (StatusCode, String)> {
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
     let mut file_bytes = Vec::new();
     let mut original_filename = String::new();
 
@@ -364,10 +365,11 @@ pub async fn delete_track_inner(
 }
 
 pub async fn delete_track(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
     delete_track_inner(&state, id).await?;
     Ok(StatusCode::OK)
 }
@@ -522,11 +524,12 @@ pub struct UpdateMetadataRequest {
 }
 
 pub async fn update_track_metadata(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(payload): Json<UpdateMetadataRequest>,
 ) -> Result<Json<TrackResponse>, (StatusCode, String)> {
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
     // Fetch current track details
     let current_track = sqlx::query("SELECT id, album_id, album, artist, path, metadata_json FROM tracks WHERE id = ?")
         .bind(id)
@@ -1018,11 +1021,12 @@ pub async fn fetch_track_metadata_inner(
 }
 
 pub async fn fetch_track_metadata(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(payload): Json<SingleFetchRequest>,
 ) -> Result<Json<TrackResponse>, (StatusCode, String)> {
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
     let track = fetch_track_metadata_inner(&state, id, &payload.provider).await?;
     Ok(Json(track))
 }
@@ -1052,10 +1056,11 @@ pub struct BulkFetchRequest {
 }
 
 pub async fn bulk_fetch_metadata(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Json(payload): Json<BulkFetchRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
     let total = payload.track_ids.len();
     for (idx, id) in payload.track_ids.iter().copied().enumerate() {
         if let Err(e) = fetch_track_metadata_inner(&state, id, &payload.provider).await {
@@ -1089,10 +1094,11 @@ pub struct BulkDeleteRequest {
 }
 
 pub async fn bulk_delete_tracks(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Json(payload): Json<BulkDeleteRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
     let total = payload.track_ids.len();
     for (idx, id) in payload.track_ids.iter().copied().enumerate() {
         if let Err(e) = delete_track_inner(&state, id).await {

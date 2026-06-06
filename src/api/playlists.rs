@@ -80,6 +80,7 @@ pub async fn create_playlist(
     State(state): State<AppState>,
     Json(payload): Json<CreatePlaylistRequest>,
 ) -> Result<(StatusCode, Json<PlaylistResponse>), (StatusCode, String)> {
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
     let res = sqlx::query(
         "INSERT INTO playlists (user_id, name, cover_url) VALUES (?, ?, ?)"
     )
@@ -133,6 +134,7 @@ pub async fn update_playlist(
     Path(id): Path<i64>,
     Json(payload): Json<CreatePlaylistRequest>,
 ) -> Result<Json<PlaylistResponse>, (StatusCode, String)> {
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
     // Verify ownership
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(id)
@@ -174,6 +176,7 @@ pub async fn delete_playlist(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
     // Verify ownership
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(id)
@@ -235,6 +238,7 @@ pub async fn add_track_to_playlist(
     Path(id): Path<i64>,
     Json(payload): Json<AddTrackRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
     // Verify ownership
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(id)
@@ -292,6 +296,7 @@ pub async fn remove_track_from_playlist(
     State(state): State<AppState>,
     Path((playlist_id, track_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
     // Verify ownership
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(playlist_id)
@@ -348,6 +353,7 @@ pub async fn reorder_playlist_tracks(
     Path(playlist_id): Path<i64>,
     Json(payload): Json<ReorderPlaylistRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
     // Verify ownership
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(playlist_id)
@@ -424,6 +430,7 @@ pub async fn bulk_add_tracks_to_playlist(
     Path(id): Path<i64>,
     Json(payload): Json<BulkAddTracksRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
     // 1. Verify ownership of the playlist
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(id)

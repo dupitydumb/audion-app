@@ -2,8 +2,9 @@
   import { onMount } from 'svelte';
   import { Play, Pause, Trash2, Search, Music, Disc, AlertCircle, RefreshCw, Heart, Plus, Pencil, MoreVertical } from '@lucide/svelte';
 
-  let { token, currentPlayingId, isPlaying, likedTrackIds, onPlayTrack, onToggleLike, addToast, isMobile, openActionSheet } = $props<{
+  let { token, role, currentPlayingId, isPlaying, likedTrackIds, onPlayTrack, onToggleLike, addToast, isMobile, openActionSheet } = $props<{
     token: string;
+    role: string;
     currentPlayingId: number | null;
     isPlaying: boolean;
     likedTrackIds: number[];
@@ -520,7 +521,7 @@
           {/each}
         </div>
       {:else}
-        {#if tracks.length > 0 && selectedTrackIds.length === 0}
+        {#if role === 'Admin' && tracks.length > 0 && selectedTrackIds.length === 0}
           <div class="bulk-hint" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; margin-bottom: 1rem; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 8px; font-size: 0.8rem; color: var(--text-muted);">
             <AlertCircle size={14} />
             <span>Select tracks using the checkboxes to perform bulk actions like metadata fetching, playlist adding, or deletion.</span>
@@ -530,6 +531,7 @@
           <table class="library-table" style="font-size: 0.95rem;">
             <thead>
               <tr>
+                {#if role === 'Admin'}
                 <th style="width: 40px; text-align: center; vertical-align: middle;">
                   <input 
                     type="checkbox" 
@@ -538,6 +540,7 @@
                     style="cursor: pointer; accent-color: var(--accent); scale: 1.1;"
                   />
                 </th>
+                {/if}
                 <th style="width: 50px;"></th>
                 <th>Title</th>
                 <th>Artist</th>
@@ -550,6 +553,7 @@
             <tbody>
               {#each tracks as track (track.id)}
                 <tr>
+                  {#if role === 'Admin'}
                   <td style="text-align: center; vertical-align: middle;">
                     <input 
                       type="checkbox" 
@@ -558,6 +562,7 @@
                       style="cursor: pointer; accent-color: var(--accent); scale: 1.1;"
                     />
                   </td>
+                  {/if}
                   <td>
                     <button 
                       onclick={() => onPlayTrack({ 
@@ -620,6 +625,7 @@
                   </td>
                   <td>
                     <div style="display: flex; justify-content: center; align-items: center; gap: 0.5rem;">
+                      {#if role !== 'StreamOnly'}
                       <button 
                         onclick={() => onToggleLike(track.id)} 
                         class="btn" 
@@ -655,7 +661,9 @@
                           </div>
                         {/if}
                       </div>
+                      {/if}
   
+                      {#if role === 'Admin'}
                       <button 
                         onclick={() => openEditModal(track)} 
                         class="btn" 
@@ -673,6 +681,7 @@
                       >
                         <Trash2 size={16} class="hover:text-red-500" style="transition: color 0.2s;" />
                       </button>
+                      {/if}
                     </div>
                   </td>
                 </tr>

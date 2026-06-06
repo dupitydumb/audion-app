@@ -832,6 +832,7 @@
           <span class="nav-text">Dashboard</span>
         </button>
 
+        {#if role === 'Admin'}
         <button 
           onclick={() => { activeTab = 'upload'; sidebarOpen = false; }} 
           class="nav-item {activeTab === 'upload' ? 'active' : ''}"
@@ -852,6 +853,7 @@
             {/if}
           </span>
         </button>
+        {/if}
 
         <button 
           onclick={() => { activeTab = 'albums'; sidebarOpen = false; }} 
@@ -959,11 +961,12 @@
       </div>
       {#if activeTab === 'dashboard'}
         <Dashboard {token} setActiveTab={(tab) => activeTab = tab} {addToast} />
-      {:else if activeTab === 'upload'}
+      {:else if activeTab === 'upload' && role === 'Admin'}
         <Upload />
-      {:else if activeTab === 'library'}
+      {:else if activeTab === 'library' && role === 'Admin'}
         <Library 
           {token} 
+          {role}
           currentPlayingId={playingTrack?.id || null} 
           {isPlaying}
           {likedTrackIds}
@@ -976,6 +979,7 @@
       {:else if activeTab === 'albums'}
         <Albums 
           {token} 
+          {role}
           currentPlayingId={playingTrack?.id || null} 
           {isPlaying}
           {likedTrackIds}
@@ -988,6 +992,7 @@
       {:else if activeTab === 'artists'}
         <Artists 
           {token} 
+          {role}
           currentPlayingId={playingTrack?.id || null} 
           {isPlaying}
           {likedTrackIds}
@@ -1000,6 +1005,7 @@
       {:else if activeTab === 'playlists'}
         <Playlists 
           {token} 
+          {role}
           currentPlayingId={playingTrack?.id || null} 
           {isPlaying}
           onPlayTrack={handlePlayTrack} 
@@ -1010,6 +1016,7 @@
       {:else if activeTab === 'liked'}
         <Liked 
           {token} 
+          {role}
           currentPlayingId={playingTrack?.id || null} 
           {isPlaying}
           {likedTrackIds}
@@ -1138,6 +1145,7 @@
                 {/if}
               </div>
             </div>
+            {#if role !== 'StreamOnly'}
             <button 
               onclick={() => playingTrack && toggleLike(playingTrack.id)} 
               class="btn" 
@@ -1146,6 +1154,7 @@
             >
               <Heart size={16} fill={likedTrackIds.includes(playingTrack.id) ? 'currentColor' : 'none'} />
             </button>
+            {/if}
           </div>
 
           <div class="mini-player-controls">
@@ -1504,6 +1513,7 @@
               {/if}
             </button>
 
+            {#if role !== 'StreamOnly'}
             <button 
               onclick={() => playingTrack && toggleLike(playingTrack.id)}
               class="fullscreen-btn"
@@ -1512,6 +1522,7 @@
             >
               <Heart size={20} fill={likedTrackIds.includes(playingTrack.id) ? 'currentColor' : 'none'} />
             </button>
+            {/if}
           </div>
 
           <div class="fullscreen-volume-row">
@@ -1626,7 +1637,7 @@
       </div>
 
       <div class="bottom-sheet-options">
-        {#if playlists.length > 0}
+        {#if role !== 'StreamOnly' && playlists.length > 0}
           <div style="margin-bottom: 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.04); padding-bottom: 0.5rem;">
             <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.5rem; padding-left: 1rem; text-transform: uppercase; letter-spacing: 0.5px;">Add to Playlist</div>
             <div style="display: flex; gap: 0.5rem; overflow-x: auto; padding: 0.25rem 0.5rem 0.5rem; scrollbar-width: none;">
@@ -1643,6 +1654,7 @@
           </div>
         {/if}
 
+        {#if role !== 'StreamOnly'}
         <button 
           onclick={() => { 
             if (actionSheetTrack) {
@@ -1655,6 +1667,7 @@
           <Heart size={16} fill={likedTrackIds.includes(actionSheetTrack.id) ? 'currentColor' : 'none'} style="color: {likedTrackIds.includes(actionSheetTrack.id) ? 'var(--danger)' : 'inherit'};" />
           <span>{likedTrackIds.includes(actionSheetTrack.id) ? 'Remove from Liked' : 'Like Track'}</span>
         </button>
+        {/if}
 
         {#if actionSheetCallbacks.onMoveUp}
           <button 
@@ -1695,7 +1708,7 @@
           </button>
         {/if}
 
-        {#if actionSheetCallbacks.onEdit}
+        {#if role === 'Admin' && actionSheetCallbacks.onEdit}
           <button 
             onclick={() => { 
               actionSheetCallbacks.onEdit?.();
@@ -1708,7 +1721,7 @@
           </button>
         {/if}
 
-        {#if actionSheetCallbacks.onDelete}
+        {#if role === 'Admin' && actionSheetCallbacks.onDelete}
           <button 
             onclick={() => { 
               actionSheetCallbacks.onDelete?.();

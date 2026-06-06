@@ -14,6 +14,22 @@ pub struct Claims {
     pub exp: usize,       // Expiration time (UNIX timestamp)
 }
 
+impl Claims {
+    pub fn require_admin(&self) -> Result<(), (axum::http::StatusCode, &'static str)> {
+        if self.role != "Admin" {
+            return Err((axum::http::StatusCode::FORBIDDEN, "Administrator privileges required"));
+        }
+        Ok(())
+    }
+
+    pub fn require_non_stream_only(&self) -> Result<(), (axum::http::StatusCode, &'static str)> {
+        if self.role == "StreamOnly" {
+            return Err((axum::http::StatusCode::FORBIDDEN, "Action not allowed for stream-only accounts"));
+        }
+        Ok(())
+    }
+}
+
 pub fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
     let salt = SaltString::generate(&mut rand::thread_rng());
     let argon2 = Argon2::default();

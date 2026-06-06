@@ -34,6 +34,7 @@ pub async fn like_track(
     State(state): State<AppState>,
     Path(track_id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
     // Verify track exists
     let _exists = sqlx::query("SELECT id FROM tracks WHERE id = ?")
         .bind(track_id)
@@ -82,6 +83,7 @@ pub async fn unlike_track(
     State(state): State<AppState>,
     Path(track_id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
     sqlx::query(
         "DELETE FROM liked_tracks WHERE user_id = ? AND track_id = ?"
     )

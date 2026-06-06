@@ -2,8 +2,9 @@
   import { onMount } from 'svelte';
   import { Play, Pause, Trash2, ListMusic, Plus, ArrowLeft, ArrowUp, ArrowDown, Music, AlertCircle, RefreshCw, MoreVertical } from '@lucide/svelte';
 
-  let { token, currentPlayingId, isPlaying, onPlayTrack, addToast, isMobile, openActionSheet } = $props<{
+  let { token, role, currentPlayingId, isPlaying, onPlayTrack, addToast, isMobile, openActionSheet } = $props<{
     token: string;
+    role: string;
     currentPlayingId: number | null;
     isPlaying: boolean;
     onPlayTrack: (track: { id: number; title: string; artist: string; format?: string | null; bitrate?: number | null }, queue?: any[]) => void;
@@ -183,6 +184,7 @@
 
   <div style="display: flex; flex-direction: column; gap: 1.5rem;">
     <!-- Create Playlist Form -->
+    {#if role !== 'StreamOnly'}
     <div class="glass-card">
       <form onsubmit={createPlaylist} style="display: flex; gap: 0.75rem; align-items: flex-end;">
         <div class="form-group" style="flex: 1; margin: 0;">
@@ -201,6 +203,7 @@
         </button>
       </form>
     </div>
+    {/if}
 
     <!-- Playlists Grid -->
     <div class="glass-card">
@@ -226,6 +229,7 @@
               </div>
               <div class="playlist-info">
                 <h4 class="playlist-title">{pl.name}</h4>
+                {#if role !== 'StreamOnly'}
                 <button 
                   onclick={(e) => { e.stopPropagation(); deletePlaylist(pl.id, pl.name); }} 
                   class="btn delete-btn"
@@ -233,6 +237,7 @@
                 >
                   <Trash2 size={14} />
                 </button>
+                {/if}
               </div>
             </div>
           {/each}
@@ -312,11 +317,11 @@
                   onclick={() => openActionSheet(
                     { id: track.id, title: track.title || 'Unknown Title', artist: track.artist || 'Unknown Artist', genre: track.genre, duration: track.duration },
                     'playlist',
-                    {
+                    role !== 'StreamOnly' ? {
                       onRemoveFromPlaylist: () => removeTrackFromPlaylist(track.id, track.title),
                       onMoveUp: index > 0 ? () => moveTrack(index, 'up') : undefined,
                       onMoveDown: index < playlistTracks.length - 1 ? () => moveTrack(index, 'down') : undefined
-                    }
+                    } : {}
                   )}
                   class="mobile-action-trigger"
                   aria-label="Track actions"
@@ -333,12 +338,16 @@
             <thead>
               <tr>
                 <th style="width: 50px;"></th>
+                {#if role !== 'StreamOnly'}
                 <th style="width: 80px; text-align: center;">Order</th>
+                {/if}
                 <th>Title</th>
                 <th>Artist</th>
                 <th class="hide-mobile">Album</th>
                 <th style="width: 80px; text-align: right;">Length</th>
+                {#if role !== 'StreamOnly'}
                 <th style="width: 100px; text-align: center;">Actions</th>
+                {/if}
               </tr>
             </thead>
             <tbody>
@@ -369,6 +378,7 @@
                       {/if}
                     </button>
                   </td>
+                  {#if role !== 'StreamOnly'}
                   <td>
                     <div style="display: flex; justify-content: center; align-items: center; gap: 0.25rem;">
                       <button 
@@ -389,6 +399,7 @@
                       </button>
                     </div>
                   </td>
+                  {/if}
                   <td>
                     <div style="display: flex; align-items: center; gap: 0.75rem; font-weight: 500; color: var(--text-primary);">
                       <div class="track-thumbnail">
@@ -416,6 +427,7 @@
                     {track.album || 'Unknown Album'}
                   </td>
                   <td style="color: var(--text-secondary); text-align: right; font-family: monospace;">{formatDuration(track.duration)}</td>
+                  {#if role !== 'StreamOnly'}
                   <td>
                     <div style="display: flex; justify-content: center;">
                       <button 
@@ -428,6 +440,7 @@
                       </button>
                     </div>
                   </td>
+                  {/if}
                 </tr>
               {/each}
             </tbody>
