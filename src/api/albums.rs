@@ -27,6 +27,9 @@ pub async fn get_albums(
     let limit = query.limit.unwrap_or(50).max(1);
     let offset = (page - 1) * limit;
 
+    let user_pool = state.get_user_pool(&_claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let albums = sqlx::query_as::<_, AlbumResponse>(
         "SELECT id, name, artist, art_path FROM albums 
          ORDER BY artist, name
@@ -34,7 +37,7 @@ pub async fn get_albums(
     )
     .bind(limit)
     .bind(offset)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -46,11 +49,14 @@ pub async fn get_album_by_id(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<AlbumResponse>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&_claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let album = sqlx::query_as::<_, AlbumResponse>(
         "SELECT id, name, artist, art_path FROM albums WHERE id = ?"
     )
     .bind(id)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Album not found".to_string()))?;
@@ -63,6 +69,9 @@ pub async fn get_album_tracks(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<TrackResponse>>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&_claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let tracks = sqlx::query_as::<_, TrackResponse>(
         "SELECT id, path, title, artist, album, track_number, disc_number, duration,
                 album_id, format, bitrate, source_type, cover_url, external_id,
@@ -72,7 +81,7 @@ pub async fn get_album_tracks(
          ORDER BY disc_number, track_number, title"
     )
     .bind(id)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -83,16 +92,7 @@ pub async fn get_album_artwork(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let album = sqlx::query("SELECT art_path FROM albums WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
-
-    let art_path = match album {
-        Some(alb) => alb.get::<Option<String>, _>("art_path"),
-        None => None,
-    };
+    let art_path = state.find_artwork_path(id).await;
 
     if let Some(ref path) = art_path {
         let full_path = state.config.data_dir.join(path);

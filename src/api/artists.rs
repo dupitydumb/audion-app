@@ -20,6 +20,9 @@ pub async fn get_artists(
     _claims: Claims,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ArtistResponse>>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&_claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let artists = sqlx::query_as::<_, ArtistResponse>(
         "SELECT artist as name, COUNT(*) as track_count, COUNT(DISTINCT album) as album_count 
          FROM tracks 
@@ -27,7 +30,7 @@ pub async fn get_artists(
          GROUP BY artist 
          ORDER BY artist"
     )
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -39,6 +42,9 @@ pub async fn get_artist_albums(
     State(state): State<AppState>,
     Path(artist_name): Path<String>,
 ) -> Result<Json<Vec<AlbumResponse>>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&_claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let albums = sqlx::query_as::<_, AlbumResponse>(
         "SELECT DISTINCT id, name, artist, art_path 
          FROM albums 
@@ -47,7 +53,7 @@ pub async fn get_artist_albums(
     )
     .bind(&artist_name)
     .bind(&artist_name)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -59,6 +65,9 @@ pub async fn get_artist_tracks(
     State(state): State<AppState>,
     Path(artist_name): Path<String>,
 ) -> Result<Json<Vec<TrackResponse>>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&_claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let tracks = sqlx::query_as::<_, TrackResponse>(
         "SELECT id, path, title, artist, album, track_number, disc_number, duration,
                 album_id, format, bitrate, source_type, cover_url, external_id,
@@ -68,7 +77,7 @@ pub async fn get_artist_tracks(
          ORDER BY album, disc_number, track_number, title"
     )
     .bind(artist_name)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

@@ -270,10 +270,11 @@ pub async fn fetch_musicbrainz_metadata(
 }
 
 pub async fn get_scan_status(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
 ) -> Json<LibraryStatusResponse> {
-    let status = state.scan_status.lock().unwrap();
+    let status_lock = state.get_user_scan_status(&claims.sub).await;
+    let status = status_lock.lock().unwrap();
     Json(LibraryStatusResponse {
         is_scanning: status.is_scanning,
         files_scanned: status.files_scanned,
@@ -283,10 +284,11 @@ pub async fn get_scan_status(
 }
 
 pub async fn get_fetch_status(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
 ) -> Json<FetchStatusResponse> {
-    let status = state.fetcher_status.lock().unwrap();
+    let status_lock = state.get_user_fetcher_status(&claims.sub).await;
+    let status = status_lock.lock().unwrap();
     Json(FetchStatusResponse {
         is_running: status.is_running,
         tracks_processed: status.tracks_processed,
@@ -296,31 +298,41 @@ pub async fn get_fetch_status(
     })
 }
 
-pub fn trigger_auto_scan(state: AppState) -> bool {
-    let mut status = state.scan_status.lock().unwrap();
-    if status.is_scanning {
-        return false;
+pub async fn trigger_auto_scan(state: AppState, user_id: String) -> bool {
+    let scan_status = state.get_user_scan_status(&user_id).await;
+    {
+        let mut status = scan_status.lock().unwrap();
+        if status.is_scanning {
+            return false;
+        }
+
+        status.is_scanning = true;
+        status.files_scanned = 0;
+        status.total_files = 0;
+        status.current_file = None;
     }
 
-    status.is_scanning = true;
-    status.files_scanned = 0;
-    status.total_files = 0;
-    status.current_file = None;
-
-    let pool = state.pool.clone();
+    let pool = match state.get_user_pool(&user_id).await {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
     let config = state.config.clone();
     let event_bus = state.event_bus.clone();
-    let scan_status = state.scan_status.clone();
+    let scan_status_clone = scan_status.clone();
+    let user_id_clone = user_id.clone();
 
     tokio::spawn(async move {
-        info!("Starting background music directory scan...");
-        let music_dir = config.music_dir();
+        info!("Starting background music directory scan for user {}...", user_id_clone);
+        let music_dir = config.user_music_dir(&user_id_clone);
         
+        // Ensure user music directory exists
+        std::fs::create_dir_all(&music_dir).ok();
+
         let mut audio_files = Vec::new();
         collect_audio_files(&music_dir, &mut audio_files);
         
         {
-            let mut status = scan_status.lock().unwrap();
+            let mut status = scan_status_clone.lock().unwrap();
             status.total_files = audio_files.len();
         }
 
@@ -337,7 +349,7 @@ pub fn trigger_auto_scan(state: AppState) -> bool {
 
             // Update scan status
             {
-                let mut status = scan_status.lock().unwrap();
+                let mut status = scan_status_clone.lock().unwrap();
                 status.files_scanned = index + 1;
                 status.current_file = Some(file_path.file_name().unwrap_or_default().to_string_lossy().to_string());
             }
@@ -345,7 +357,7 @@ pub fn trigger_auto_scan(state: AppState) -> bool {
             // Periodically broadcast progress
             if (index + 1) % 5 == 0 || index + 1 == audio_files.len() {
                 let status_clone = {
-                    let status = scan_status.lock().unwrap();
+                    let status = scan_status_clone.lock().unwrap();
                     status.clone()
                 };
                 broadcast_library_event(&event_bus, "scan.progress", serde_json::to_value(&status_clone).unwrap_or(serde_json::Value::Null));
@@ -436,11 +448,11 @@ pub fn trigger_auto_scan(state: AppState) -> bool {
 
                 if let Ok(r) = res {
                     let track_id = r.last_insert_rowid();
-                    let artwork_dir = config.artwork_dir();
+                    let artwork_dir = config.user_artwork_dir(&user_id_clone);
                     std::fs::create_dir_all(&artwork_dir).ok();
 
                     if let Some(cover_data) = &metadata.track_cover {
-                        let relative_cover = format!("artwork/track_{}.jpg", track_id);
+                        let relative_cover = format!("users/{}/artwork/track_{}.jpg", user_id_clone, track_id);
                         let cover_full = config.data_dir.join(&relative_cover);
                         if std::fs::write(&cover_full, cover_data).is_ok() {
                             sqlx::query("UPDATE tracks SET track_cover_path = ? WHERE id = ?")
@@ -462,7 +474,7 @@ pub fn trigger_auto_scan(state: AppState) -> bool {
                                 .unwrap_or(false);
 
                             if !has_art {
-                                let relative_art = format!("artwork/album_{}.jpg", alb_id);
+                                let relative_art = format!("users/{}/artwork/album_{}.jpg", user_id_clone, alb_id);
                                 let art_full = config.data_dir.join(&relative_art);
                                 if std::fs::write(&art_full, art_data).is_ok() {
                                     sqlx::query("UPDATE albums SET art_path = ? WHERE id = ?")
@@ -494,17 +506,17 @@ pub fn trigger_auto_scan(state: AppState) -> bool {
         }
 
         {
-            let mut status = scan_status.lock().unwrap();
+            let mut status = scan_status_clone.lock().unwrap();
             status.is_scanning = false;
         }
 
         let final_status = {
-            let status = scan_status.lock().unwrap();
+            let status = scan_status_clone.lock().unwrap();
             status.clone()
         };
 
         broadcast_library_event(&event_bus, "scan.completed", serde_json::to_value(&final_status).unwrap_or(serde_json::Value::Null));
-        info!("Background music directory scan completed.");
+        info!("Background music directory scan for user {} completed.", user_id_clone);
     });
 
     true
@@ -514,8 +526,8 @@ pub async fn start_scan(
     claims: Claims,
     State(state): State<AppState>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
-    if trigger_auto_scan(state) {
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    if trigger_auto_scan(state, claims.sub).await {
         Ok(StatusCode::ACCEPTED)
     } else {
         Err((StatusCode::CONFLICT, "Scan already in progress".to_string()))
@@ -527,8 +539,11 @@ pub async fn start_metadata_fetcher(
     State(state): State<AppState>,
     payload: Option<Json<FetcherRequest>>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
-    let mut status = state.fetcher_status.lock().unwrap();
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let fetcher_status_lock = state.get_user_fetcher_status(&claims.sub).await;
+    let mut status = fetcher_status_lock.lock().unwrap();
     if status.is_running {
         return Err((StatusCode::CONFLICT, "Metadata fetcher already running".to_string()));
     }
@@ -543,10 +558,11 @@ pub async fn start_metadata_fetcher(
     status.current_track = None;
     status.logs = vec![format!("Worker started (Provider: {}). Analyzing database library...", provider)];
 
-    let pool = state.pool.clone();
+    let pool = user_pool;
     let config = state.config.clone();
     let event_bus = state.event_bus.clone();
-    let fetcher_status = state.fetcher_status.clone();
+    let fetcher_status = fetcher_status_lock.clone();
+    let user_id = claims.sub.clone();
 
     let provider_clone = provider.clone();
     tokio::spawn(async move {
@@ -657,7 +673,7 @@ pub async fn start_metadata_fetcher(
                                 if let Ok(c_resp) = c_resp_res {
                                     if c_resp.status().is_success() {
                                         if let Ok(bytes) = c_resp.bytes().await {
-                                            let relative_cover = format!("artwork/track_{}.jpg", track_id);
+                                            let relative_cover = format!("users/{}/artwork/track_{}.jpg", user_id, track_id);
                                             let cover_full = config.data_dir.join(&relative_cover);
                                             std::fs::create_dir_all(cover_full.parent().unwrap()).ok();
                                             if std::fs::write(&cover_full, &bytes).is_ok() {
@@ -678,7 +694,7 @@ pub async fn start_metadata_fetcher(
                                                     .unwrap_or(false);
 
                                                 if !has_art {
-                                                    let relative_art = format!("artwork/album_{}.jpg", alb_id);
+                                                    let relative_art = format!("users/{}/artwork/album_{}.jpg", user_id, alb_id);
                                                     let art_full = config.data_dir.join(&relative_art);
                                                     if std::fs::write(&art_full, &bytes).is_ok() {
                                                         sqlx::query("UPDATE albums SET art_path = ? WHERE id = ?")
@@ -805,12 +821,16 @@ pub async fn start_metadata_fetcher(
                                     // Match album
                                     let album_id = match_or_create_album(&pool, &match_track.album.title, &match_track.artist.name).await;
 
+                                    // Serialize response
                                     let metadata_json = serde_json::to_value(&match_track).ok().map(|v| v.to_string());
                                     let ext_id = Some(match_track.id.to_string());
 
-                                    // Update track metadata in DB (including duration if missing)
+                                    // Update track in DB
                                     let update_res = sqlx::query(
-                                        "UPDATE tracks SET title = ?, artist = ?, album = ?, album_id = ?, external_id = ?, metadata_json = ?, duration = CASE WHEN duration IS NULL OR duration <= 0 THEN ? ELSE duration END WHERE id = ?"
+                                        "UPDATE tracks 
+                                         SET title = ?, artist = ?, album = ?, album_id = ?, external_id = ?, metadata_json = ?,
+                                             duration = CASE WHEN duration IS NULL OR duration <= 0 THEN ? ELSE duration END
+                                         WHERE id = ?"
                                     )
                                     .bind(&match_track.title)
                                     .bind(&match_track.artist.name)
@@ -829,7 +849,7 @@ pub async fn start_metadata_fetcher(
                                             if let Ok(c_resp) = client.get(cover_url).send().await {
                                                 if c_resp.status().is_success() {
                                                     if let Ok(bytes) = c_resp.bytes().await {
-                                                        let relative_cover = format!("artwork/track_{}.jpg", track_id);
+                                                        let relative_cover = format!("users/{}/artwork/track_{}.jpg", user_id, track_id);
                                                         let cover_full = config.data_dir.join(&relative_cover);
                                                         std::fs::create_dir_all(cover_full.parent().unwrap()).ok();
                                                         if std::fs::write(&cover_full, &bytes).is_ok() {
@@ -850,7 +870,7 @@ pub async fn start_metadata_fetcher(
                                                                 .unwrap_or(false);
 
                                                             if !has_art {
-                                                                let relative_art = format!("artwork/album_{}.jpg", alb_id);
+                                                                let relative_art = format!("users/{}/artwork/album_{}.jpg", user_id, alb_id);
                                                                 let art_full = config.data_dir.join(&relative_art);
                                                                 if std::fs::write(&art_full, &bytes).is_ok() {
                                                                     sqlx::query("UPDATE albums SET art_path = ? WHERE id = ?")
@@ -918,9 +938,9 @@ pub async fn start_metadata_fetcher(
                             log_fetcher_message(&fetcher_status, &event_bus, &err_log);
                         }
                     }
-                    Err(err) => {
-                        let err_log = format!("  -> API request failed: {}", err);
-                        log_fetcher_message(&fetcher_status, &event_bus, &err_log);
+                    Err(e) => {
+                        let err_msg = format!("Deezer API request error: {}", e);
+                        log_fetcher_message(&fetcher_status, &event_bus, &err_msg);
                     }
                 }
             }
@@ -950,10 +970,13 @@ pub async fn clean_library(
     claims: Claims,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     info!("Pruning orphan records from database library...");
     let tracks = sqlx::query("SELECT id, path, track_cover_path FROM tracks")
-        .fetch_all(&state.pool)
+        .fetch_all(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -979,7 +1002,7 @@ pub async fn clean_library(
 
             sqlx::query("DELETE FROM tracks WHERE id = ?")
                 .bind(id)
-                .execute(&state.pool)
+                .execute(&user_pool)
                 .await
                 .ok();
 
@@ -990,7 +1013,7 @@ pub async fn clean_library(
             if let Ok(er) = sqlx::query("INSERT INTO events (event_type, payload) VALUES (?, ?)")
                 .bind(event_type)
                 .bind(&payload_str)
-                .execute(&state.pool)
+                .execute(&user_pool)
                 .await 
             {
                 let event_id = er.last_insert_rowid();
@@ -1009,7 +1032,7 @@ pub async fn clean_library(
     let prune_albums_res = sqlx::query(
         "DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)"
     )
-    .execute(&state.pool)
+    .execute(&user_pool)
     .await;
 
     if let Ok(r) = prune_albums_res {
@@ -1028,22 +1051,25 @@ pub async fn reset_library(
     claims: Claims,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     info!("Resetting library database...");
 
-    sqlx::query("DELETE FROM tracks").execute(&state.pool).await
+    sqlx::query("DELETE FROM tracks").execute(&user_pool).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    sqlx::query("DELETE FROM albums").execute(&state.pool).await
+    sqlx::query("DELETE FROM albums").execute(&user_pool).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    sqlx::query("DELETE FROM playlists").execute(&state.pool).await
+    sqlx::query("DELETE FROM playlists").execute(&user_pool).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    sqlx::query("DELETE FROM liked_tracks").execute(&state.pool).await
+    sqlx::query("DELETE FROM liked_tracks").execute(&user_pool).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let artwork_dir = state.config.artwork_dir();
+    let artwork_dir = state.config.user_artwork_dir(&claims.sub);
     if artwork_dir.exists() {
         let _ = std::fs::remove_dir_all(&artwork_dir);
         let _ = std::fs::create_dir_all(&artwork_dir);

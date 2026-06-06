@@ -1,12 +1,13 @@
 use notify::{Watcher, RecommendedWatcher, RecursiveMode, EventKind};
 use crate::state::AppState;
+use std::collections::HashSet;
 
 pub fn start_file_watcher(state: AppState) {
-    let music_dir = state.config.music_dir();
+    let users_root = state.config.data_dir.join("users");
     
-    // Ensure music directory exists
-    if !music_dir.exists() {
-        std::fs::create_dir_all(&music_dir).ok();
+    // Ensure users directory exists
+    if !users_root.exists() {
+        std::fs::create_dir_all(&users_root).ok();
     }
     
     let state_clone = state.clone();
@@ -24,19 +25,20 @@ pub fn start_file_watcher(state: AppState) {
         );
         
         if let Ok(ref mut w) = watcher {
-            if w.watch(&music_dir, RecursiveMode::Recursive).is_err() {
-                tracing::error!("Failed to watch directory {:?}", music_dir);
+            if w.watch(&users_root, RecursiveMode::Recursive).is_err() {
+                tracing::error!("Failed to watch directory {:?}", users_root);
                 return;
             }
-            tracing::info!("Directory watcher started for {:?}", music_dir);
+            tracing::info!("Directory watcher started for {:?}", users_root);
         } else {
             tracing::error!("Failed to create directory watcher");
             return;
         }
         
-        // Debounce logic: wait for 5 seconds of inactivity before launching library scan
+        // Debounce logic: wait for 5 seconds of inactivity before launching library scan.
+        // We track a set of pending user IDs to scan.
         let mut timer = Box::pin(tokio::time::sleep(tokio::time::Duration::from_secs(0)));
-        let mut pending = false;
+        let mut pending_users = HashSet::new();
         
         loop {
             tokio::select! {
@@ -46,14 +48,32 @@ pub fn start_file_watcher(state: AppState) {
                         _ => false,
                     };
                     if is_relevant {
-                        pending = true;
-                        timer = Box::pin(tokio::time::sleep(tokio::time::Duration::from_secs(5)));
+                        for path in event.paths {
+                            if let Ok(rel_path) = path.strip_prefix(&users_root) {
+                                let mut components = rel_path.components();
+                                if let Some(std::path::Component::Normal(user_id_os)) = components.next() {
+                                    if let Some(user_id) = user_id_os.to_str() {
+                                        if let Some(std::path::Component::Normal(music_os)) = components.next() {
+                                            if music_os == "music" {
+                                                pending_users.insert(user_id.to_string());
+                                                timer = Box::pin(tokio::time::sleep(tokio::time::Duration::from_secs(5)));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                _ = &mut timer, if pending => {
-                    pending = false;
-                    tracing::info!("Filesystem change detected. Triggering library auto-scan...");
-                    crate::api::library::trigger_auto_scan(state_clone.clone());
+                _ = &mut timer, if !pending_users.is_empty() => {
+                    let users_to_scan: Vec<String> = pending_users.drain().collect();
+                    for user_id in users_to_scan {
+                        tracing::info!("Filesystem change detected for user {}. Triggering library auto-scan...", user_id);
+                        let state_cloned = state_clone.clone();
+                        tokio::spawn(async move {
+                            crate::api::library::trigger_auto_scan(state_cloned, user_id).await;
+                        });
+                    }
                 }
             }
         }

@@ -27,6 +27,9 @@ pub async fn search(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchResults>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&_claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let search_pattern = format!("%{}%", query.q);
 
     // Search tracks
@@ -43,7 +46,7 @@ pub async fn search(
     .bind(&search_pattern)
     .bind(&search_pattern)
     .bind(&search_pattern)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -57,7 +60,7 @@ pub async fn search(
     )
     .bind(&search_pattern)
     .bind(&search_pattern)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -71,7 +74,7 @@ pub async fn search(
          LIMIT 20"
     )
     .bind(&search_pattern)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

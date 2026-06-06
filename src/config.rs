@@ -61,4 +61,20 @@ impl Config {
     pub fn db_path(&self) -> PathBuf {
         self.data_dir.join("db").join("audion.sqlite")
     }
+
+    pub fn user_dir(&self, user_id: &str) -> PathBuf {
+        self.data_dir.join("users").join(user_id)
+    }
+
+    pub fn user_music_dir(&self, user_id: &str) -> PathBuf {
+        self.user_dir(user_id).join("music")
+    }
+
+    pub fn user_artwork_dir(&self, user_id: &str) -> PathBuf {
+        self.user_dir(user_id).join("artwork")
+    }
+
+    pub fn user_db_path(&self, user_id: &str) -> PathBuf {
+        self.user_dir(user_id).join("db").join("audion.sqlite")
+    }
 }

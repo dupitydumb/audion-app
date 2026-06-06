@@ -237,13 +237,18 @@ pub async fn get_indexes(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     let f = params.f.as_deref().unwrap_or("xml");
-    if let Err(e) = authenticate(&state, &params).await {
-        return subsonic_error(f, ERROR_AUTH, &e);
-    }
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &format!("User database error: {}", e)),
+    };
 
     // Fetch distinct artist names from tracks
     let artists_res = sqlx::query("SELECT DISTINCT artist FROM tracks WHERE artist IS NOT NULL AND artist != '' ORDER BY artist ASC")
-        .fetch_all(&state.pool)
+        .fetch_all(&user_pool)
         .await;
 
     let artist_rows = match artists_res {
@@ -330,9 +335,14 @@ pub async fn get_music_directory(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     let f = params.f.as_deref().unwrap_or("xml");
-    if let Err(e) = authenticate(&state, &params).await {
-        return subsonic_error(f, ERROR_AUTH, &e);
-    }
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &format!("User database error: {}", e)),
+    };
 
     let directory_id = match &params.id {
         Some(id) => id,
@@ -356,7 +366,7 @@ pub async fn get_music_directory(
             "SELECT DISTINCT album_id, album FROM tracks WHERE artist = ? AND album_id IS NOT NULL ORDER BY album ASC"
         )
         .bind(&artist_name)
-        .fetch_all(&state.pool)
+        .fetch_all(&user_pool)
         .await;
 
         let album_rows = match albums_res {
@@ -423,7 +433,7 @@ pub async fn get_music_directory(
         // Query album name
         let album_name: String = match sqlx::query_scalar("SELECT name FROM albums WHERE id = ?")
             .bind(album_id)
-            .fetch_optional(&state.pool)
+            .fetch_optional(&user_pool)
             .await
         {
             Ok(Some(n)) => n,
@@ -435,7 +445,7 @@ pub async fn get_music_directory(
             "SELECT id, title, artist, album, track_number, duration, size, format, bitrate FROM tracks WHERE album_id = ? ORDER BY disc_number, track_number"
         )
         .bind(album_id)
-        .fetch_all(&state.pool)
+        .fetch_all(&user_pool)
         .await;
 
         let track_rows = match tracks_res {
@@ -537,9 +547,14 @@ pub async fn get_song(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     let f = params.f.as_deref().unwrap_or("xml");
-    if let Err(e) = authenticate(&state, &params).await {
-        return subsonic_error(f, ERROR_AUTH, &e);
-    }
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &format!("User database error: {}", e)),
+    };
 
     let song_id_str = match &params.id {
         Some(id) if id.starts_with("tr_") => &id[3..],
@@ -556,7 +571,7 @@ pub async fn get_song(
         "SELECT id, title, artist, album, album_id, track_number, duration, size, format, bitrate FROM tracks WHERE id = ?"
     )
     .bind(song_id)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&user_pool)
     .await;
 
     let track_row = match track_res {
@@ -670,6 +685,10 @@ pub async fn scrobble(
         Ok(u) => u,
         Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
     };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &format!("User database error: {}", e)),
+    };
 
     let song_id_str = match &params.id {
         Some(id) if id.starts_with("tr_") => &id[3..],
@@ -690,13 +709,13 @@ pub async fn scrobble(
         .bind(song_id)
         .bind(0) // Duration info not strictly provided in standard scrobble.view, can default to 0
         .bind(params.c.as_deref().unwrap_or("Subsonic Client"))
-        .execute(&state.pool)
+        .execute(&user_pool)
         .await;
 
         if play_recorded.is_ok() {
             // Trigger automatic scrobbling to ListenBrainz if user token is configured!
             if let Some(ref token) = user.listenbrainz_token {
-                let pool = state.pool.clone();
+                let pool = user_pool.clone();
                 let client_token = token.clone();
                 tokio::spawn(async move {
                     if let Err(e) = crate::api::subsonic::scrobble_to_listenbrainz(&pool, song_id, &client_token).await {

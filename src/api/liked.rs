@@ -12,6 +12,9 @@ pub async fn get_liked_tracks(
     claims: Claims,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<TrackResponse>>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let tracks = sqlx::query_as::<_, TrackResponse>(
         "SELECT t.id, t.path, t.title, t.artist, t.album, t.track_number, t.disc_number, t.duration,
                 t.album_id, t.format, t.bitrate, t.source_type, t.cover_url, t.external_id,
@@ -22,7 +25,7 @@ pub async fn get_liked_tracks(
          ORDER BY lt.liked_at DESC"
     )
     .bind(&claims.sub)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -35,10 +38,13 @@ pub async fn like_track(
     Path(track_id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // Verify track exists
     let _exists = sqlx::query("SELECT id FROM tracks WHERE id = ?")
         .bind(track_id)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Track not found".to_string()))?;
@@ -48,7 +54,7 @@ pub async fn like_track(
     )
     .bind(&claims.sub)
     .bind(track_id)
-    .execute(&state.pool)
+    .execute(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -62,7 +68,7 @@ pub async fn like_track(
     )
     .bind(event_type)
     .bind(&payload_str)
-    .execute(&state.pool)
+    .execute(&user_pool)
     .await
     {
         let event_id = res.last_insert_rowid();
@@ -84,12 +90,15 @@ pub async fn unlike_track(
     Path(track_id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     sqlx::query(
         "DELETE FROM liked_tracks WHERE user_id = ? AND track_id = ?"
     )
     .bind(&claims.sub)
     .bind(track_id)
-    .execute(&state.pool)
+    .execute(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -103,7 +112,7 @@ pub async fn unlike_track(
     )
     .bind(event_type)
     .bind(&payload_str)
-    .execute(&state.pool)
+    .execute(&user_pool)
     .await
     {
         let event_id = res.last_insert_rowid();

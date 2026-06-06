@@ -67,9 +67,14 @@ pub async fn stream_track(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Response {
+    let user_pool = match state.get_user_pool(&_claims.sub).await {
+        Ok(p) => p,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
     let (path, format) = match sqlx::query("SELECT path, format FROM tracks WHERE id = ?")
         .bind(id)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
     {
         Ok(Some(row)) => {
@@ -204,14 +209,7 @@ pub async fn get_track_cover(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let cover_path = match sqlx::query("SELECT track_cover_path FROM tracks WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&state.pool)
-        .await
-    {
-        Ok(Some(row)) => row.get::<Option<String>, _>("track_cover_path"),
-        _ => None,
-    };
+    let cover_path = state.find_track_cover_path(id).await;
 
     if let Some(ref path) = cover_path {
         let full_path = state.config.data_dir.join(path);
@@ -238,9 +236,14 @@ pub async fn stream_track_subsonic(
     max_bitrate: Option<i32>,
     target_format: Option<&str>,
 ) -> Response {
+    let user_pool = match state.get_user_pool(&_claims.sub).await {
+        Ok(p) => p,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
     let (path, format) = match sqlx::query("SELECT path, format FROM tracks WHERE id = ?")
         .bind(id)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
     {
         Ok(Some(row)) => {

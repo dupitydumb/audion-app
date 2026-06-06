@@ -52,6 +52,9 @@ pub async fn get_tracks(
     let limit = query.limit.unwrap_or(50).max(1);
     let offset = (page - 1) * limit;
 
+    let user_pool = state.get_user_pool(&_claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let tracks = sqlx::query_as::<_, TrackResponse>(
         "SELECT id, path, title, artist, album, track_number, disc_number, duration,
                 album_id, format, bitrate, source_type, cover_url, external_id,
@@ -62,7 +65,7 @@ pub async fn get_tracks(
     )
     .bind(limit)
     .bind(offset)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -74,6 +77,9 @@ pub async fn get_track_by_id(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<TrackResponse>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&_claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let track = sqlx::query_as::<_, TrackResponse>(
         "SELECT id, path, title, artist, album, track_number, disc_number, duration,
                 album_id, format, bitrate, source_type, cover_url, external_id,
@@ -82,7 +88,7 @@ pub async fn get_track_by_id(
          WHERE id = ?"
     )
     .bind(id)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Track not found".to_string()))?;
@@ -95,7 +101,9 @@ pub async fn upload_track(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<TrackResponse>), (StatusCode, String)> {
-    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let mut file_bytes = Vec::new();
     let mut original_filename = String::new();
 
@@ -118,7 +126,7 @@ pub async fn upload_track(
         .and_then(|s| s.to_str())
         .unwrap_or("mp3")
         .to_string();
-    let relative_path = format!("music/{}.{}", file_uuid, ext);
+    let relative_path = format!("users/{}/music/{}.{}", claims.sub, file_uuid, ext);
     let full_path = state.config.data_dir.join(&relative_path);
 
     // Ensure music directory exists
@@ -149,7 +157,7 @@ pub async fn upload_track(
     if let Some(ref hash) = metadata.content_hash {
         let existing = sqlx::query("SELECT id FROM tracks WHERE content_hash = ?")
             .bind(hash)
-            .fetch_optional(&state.pool)
+            .fetch_optional(&user_pool)
             .await
             .map_err(|e| {
                 let _ = std::fs::remove_file(&full_path);
@@ -166,7 +174,7 @@ pub async fn upload_track(
     let album_id = if let Some(album_name) = &metadata.album {
         let existing_album = sqlx::query("SELECT id FROM albums WHERE name = ?")
             .bind(album_name)
-            .fetch_optional(&state.pool)
+            .fetch_optional(&user_pool)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -176,7 +184,7 @@ pub async fn upload_track(
             let res = sqlx::query("INSERT INTO albums (name, artist) VALUES (?, ?)")
                 .bind(album_name)
                 .bind(&metadata.artist)
-                .execute(&state.pool)
+                .execute(&user_pool)
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             Some(res.last_insert_rowid())
@@ -209,25 +217,25 @@ pub async fn upload_track(
     .bind(&metadata.genre)
     .bind(&metadata.metadata_json)
     .bind(file_bytes.len() as i64)
-    .execute(&state.pool)
+    .execute(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let track_id = res.last_insert_rowid();
 
     // Ensure artwork directory exists
-    let artwork_dir = state.config.artwork_dir();
+    let artwork_dir = state.config.user_artwork_dir(&claims.sub);
     std::fs::create_dir_all(&artwork_dir).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Save track cover if present
     if let Some(cover_data) = &metadata.track_cover {
-        let relative_cover = format!("artwork/track_{}.jpg", track_id);
+        let relative_cover = format!("users/{}/artwork/track_{}.jpg", claims.sub, track_id);
         let cover_full = state.config.data_dir.join(&relative_cover);
         if std::fs::write(&cover_full, cover_data).is_ok() {
             sqlx::query("UPDATE tracks SET track_cover_path = ? WHERE id = ?")
                 .bind(&relative_cover)
                 .bind(track_id)
-                .execute(&state.pool)
+                .execute(&user_pool)
                 .await
                 .ok();
         }
@@ -238,19 +246,19 @@ pub async fn upload_track(
         if let Some(art_data) = &metadata.album_art {
             let has_art = sqlx::query("SELECT art_path FROM albums WHERE id = ? AND art_path IS NOT NULL")
                 .bind(alb_id)
-                .fetch_optional(&state.pool)
+                .fetch_optional(&user_pool)
                 .await
                 .map(|o| o.is_some())
                 .unwrap_or(false);
 
             if !has_art {
-                let relative_art = format!("artwork/album_{}.jpg", alb_id);
+                let relative_art = format!("users/{}/artwork/album_{}.jpg", claims.sub, alb_id);
                 let art_full = state.config.data_dir.join(&relative_art);
                 if std::fs::write(&art_full, art_data).is_ok() {
                     sqlx::query("UPDATE albums SET art_path = ? WHERE id = ?")
                         .bind(&relative_art)
                         .bind(alb_id)
-                        .execute(&state.pool)
+                        .execute(&user_pool)
                         .await
                         .ok();
                 }
@@ -267,7 +275,7 @@ pub async fn upload_track(
          WHERE id = ?"
     )
     .bind(track_id)
-    .fetch_one(&state.pool)
+    .fetch_one(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -279,7 +287,7 @@ pub async fn upload_track(
     let event_res = sqlx::query("INSERT INTO events (event_type, payload) VALUES (?, ?)")
         .bind(event_type)
         .bind(payload_str)
-        .execute(&state.pool)
+        .execute(&user_pool)
         .await;
 
     if let Ok(er) = event_res {
@@ -301,11 +309,12 @@ pub async fn upload_track(
 
 pub async fn delete_track_inner(
     state: &AppState,
+    pool: &sqlx::SqlitePool,
     id: i64,
 ) -> Result<(), (StatusCode, String)> {
     let track = sqlx::query("SELECT path, track_cover_path FROM tracks WHERE id = ?")
         .bind(id)
-        .fetch_optional(&state.pool)
+        .fetch_optional(pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Track not found".to_string()))?;
@@ -332,7 +341,7 @@ pub async fn delete_track_inner(
     // Delete from DB
     sqlx::query("DELETE FROM tracks WHERE id = ?")
         .bind(id)
-        .execute(&state.pool)
+        .execute(pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -344,7 +353,7 @@ pub async fn delete_track_inner(
     let event_res = sqlx::query("INSERT INTO events (event_type, payload) VALUES (?, ?)")
         .bind(event_type)
         .bind(payload_str)
-        .execute(&state.pool)
+        .execute(pool)
         .await;
 
     if let Ok(er) = event_res {
@@ -369,8 +378,10 @@ pub async fn delete_track(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
-    delete_track_inner(&state, id).await?;
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    delete_track_inner(&state, &user_pool, id).await?;
     Ok(StatusCode::OK)
 }
 
@@ -401,9 +412,12 @@ pub async fn get_track_lyrics(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<LyricsResponse>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&_claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let row = sqlx::query("SELECT title, artist, album, duration, metadata_json FROM tracks WHERE id = ?")
         .bind(id)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Track not found".to_string()))?;
@@ -502,7 +516,7 @@ pub async fn get_track_lyrics(
                         let _ = sqlx::query("UPDATE tracks SET metadata_json = ? WHERE id = ?")
                             .bind(updated_json)
                             .bind(id)
-                            .execute(&state.pool)
+                            .execute(&user_pool)
                             .await;
                     }
                 }
@@ -529,11 +543,13 @@ pub async fn update_track_metadata(
     Path(id): Path<i64>,
     Json(payload): Json<UpdateMetadataRequest>,
 ) -> Result<Json<TrackResponse>, (StatusCode, String)> {
-    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     // Fetch current track details
     let current_track = sqlx::query("SELECT id, album_id, album, artist, path, metadata_json FROM tracks WHERE id = ?")
         .bind(id)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Track not found".to_string()))?;
@@ -554,7 +570,7 @@ pub async fn update_track_metadata(
             } else {
                 let existing = sqlx::query("SELECT id FROM albums WHERE name = ?")
                     .bind(new_album_name)
-                    .fetch_optional(&state.pool)
+                    .fetch_optional(&user_pool)
                     .await
                     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -564,7 +580,7 @@ pub async fn update_track_metadata(
                     let res = sqlx::query("INSERT INTO albums (name, artist) VALUES (?, ?)")
                         .bind(new_album_name)
                         .bind(&payload.artist.as_ref().or(old_artist.as_ref()))
-                        .execute(&state.pool)
+                        .execute(&user_pool)
                         .await
                         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
                     new_album_id = Some(res.last_insert_rowid());
@@ -618,7 +634,7 @@ pub async fn update_track_metadata(
     .bind(payload.disc_number)
     .bind(new_metadata_json)
     .bind(id)
-    .execute(&state.pool)
+    .execute(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -627,14 +643,14 @@ pub async fn update_track_metadata(
         if Some(o_alb_id) != new_album_id {
             let tracks_left: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM tracks WHERE album_id = ?")
                 .bind(o_alb_id)
-                .fetch_one(&state.pool)
+                .fetch_one(&user_pool)
                 .await
                 .unwrap_or(0);
 
             if tracks_left == 0 {
                 let art_path_opt: Option<String> = sqlx::query_scalar("SELECT art_path FROM albums WHERE id = ?")
                     .bind(o_alb_id)
-                    .fetch_one(&state.pool)
+                    .fetch_one(&user_pool)
                     .await
                     .unwrap_or(None);
 
@@ -647,7 +663,7 @@ pub async fn update_track_metadata(
 
                 sqlx::query("DELETE FROM albums WHERE id = ?")
                     .bind(o_alb_id)
-                    .execute(&state.pool)
+                    .execute(&user_pool)
                     .await
                     .ok();
             }
@@ -708,7 +724,7 @@ pub async fn update_track_metadata(
          WHERE id = ?"
     )
     .bind(id)
-    .fetch_one(&state.pool)
+    .fetch_one(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -720,7 +736,7 @@ pub async fn update_track_metadata(
     if let Ok(er) = sqlx::query("INSERT INTO events (event_type, payload) VALUES (?, ?)")
         .bind(event_type)
         .bind(&payload_str)
-        .execute(&state.pool)
+        .execute(&user_pool)
         .await
     {
         let event_id = er.last_insert_rowid();
@@ -742,13 +758,14 @@ pub struct SingleFetchRequest {
 
 pub async fn fetch_track_metadata_inner(
     state: &AppState,
+    pool: &sqlx::SqlitePool,
     id: i64,
     provider: &str,
 ) -> Result<TrackResponse, (StatusCode, String)> {
     // 1. Get track path and metadata from DB
     let track_row = sqlx::query("SELECT id, path, title, artist, album, duration FROM tracks WHERE id = ?")
         .bind(id)
-        .fetch_optional(&state.pool)
+        .fetch_optional(pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Track not found".to_string()))?;
@@ -782,7 +799,7 @@ pub async fn fetch_track_metadata_inner(
         .await
         .ok_or_else(|| (StatusCode::NOT_FOUND, "No matching metadata found on MusicBrainz".to_string()))?;
 
-        let album_id = crate::api::library::match_or_create_album(&state.pool, &mb_match.album, &mb_match.artist).await;
+        let album_id = crate::api::library::match_or_create_album(pool, &mb_match.album, &mb_match.artist).await;
         let metadata_json = serde_json::to_string(&mb_match).ok();
 
         // Update database row
@@ -803,7 +820,7 @@ pub async fn fetch_track_metadata_inner(
         .bind(metadata_json)
         .bind(mb_match.duration)
         .bind(id)
-        .execute(&state.pool)
+        .execute(pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -817,14 +834,26 @@ pub async fn fetch_track_metadata_inner(
             {
                 if c_resp.status().is_success() {
                     if let Ok(bytes) = c_resp.bytes().await {
-                        let relative_cover = format!("artwork/track_{}.jpg", id);
+                        // Extract user_id from path if possible to store in their folder, or default path.
+                        // Actually, since track_path is format "users/<user_id>/music/...", we can infer the user folder!
+                        // Let's write helper logic or write directly inside the parent folder of track_path.
+                        let file_full_path = state.config.data_dir.join(&track_path);
+                        let relative_cover = if let Some(parent) = std::path::Path::new(&track_path).parent() {
+                            if let Some(grandparent) = parent.parent() {
+                                grandparent.join("artwork").join(format!("track_{}.jpg", id)).to_string_lossy().to_string().replace("\\", "/")
+                            } else {
+                                format!("artwork/track_{}.jpg", id)
+                            }
+                        } else {
+                            format!("artwork/track_{}.jpg", id)
+                        };
                         let cover_full = state.config.data_dir.join(&relative_cover);
                         std::fs::create_dir_all(cover_full.parent().unwrap()).ok();
                         if std::fs::write(&cover_full, &bytes).is_ok() {
                             sqlx::query("UPDATE tracks SET track_cover_path = ? WHERE id = ?")
                                 .bind(&relative_cover)
                                 .bind(id)
-                                .execute(&state.pool)
+                                .execute(pool)
                                 .await
                                 .ok();
                         }
@@ -913,7 +942,7 @@ pub async fn fetch_track_metadata_inner(
         let match_track = best_match
             .map(|(t, _)| t)
             .ok_or_else(|| (StatusCode::NOT_FOUND, "No matching metadata found on Deezer above confidence threshold".to_string()))?;
-        let album_id = crate::api::library::match_or_create_album(&state.pool, &match_track.album.title, &match_track.artist.name).await;
+        let album_id = crate::api::library::match_or_create_album(pool, &match_track.album.title, &match_track.artist.name).await;
         let metadata_json = serde_json::to_value(&match_track).ok().map(|v| v.to_string());
         let ext_id = Some(match_track.id.to_string());
 
@@ -931,7 +960,7 @@ pub async fn fetch_track_metadata_inner(
         .bind(metadata_json)
         .bind(match_track.duration)
         .bind(id)
-        .execute(&state.pool)
+        .execute(pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -940,14 +969,22 @@ pub async fn fetch_track_metadata_inner(
             if let Ok(c_resp) = client.get(cover_url).send().await {
                 if c_resp.status().is_success() {
                     if let Ok(bytes) = c_resp.bytes().await {
-                        let relative_cover = format!("artwork/track_{}.jpg", id);
+                        let relative_cover = if let Some(parent) = std::path::Path::new(&track_path).parent() {
+                            if let Some(grandparent) = parent.parent() {
+                                grandparent.join("artwork").join(format!("track_{}.jpg", id)).to_string_lossy().to_string().replace("\\", "/")
+                            } else {
+                                format!("artwork/track_{}.jpg", id)
+                            }
+                        } else {
+                            format!("artwork/track_{}.jpg", id)
+                        };
                         let cover_full = state.config.data_dir.join(&relative_cover);
                         std::fs::create_dir_all(cover_full.parent().unwrap()).ok();
                         if std::fs::write(&cover_full, &bytes).is_ok() {
                             sqlx::query("UPDATE tracks SET track_cover_path = ? WHERE id = ?")
                                 .bind(&relative_cover)
                                 .bind(id)
-                                .execute(&state.pool)
+                                .execute(pool)
                                 .await
                                 .ok();
                         }
@@ -993,7 +1030,7 @@ pub async fn fetch_track_metadata_inner(
          WHERE id = ?"
     )
     .bind(id)
-    .fetch_one(&state.pool)
+    .fetch_one(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -1005,7 +1042,7 @@ pub async fn fetch_track_metadata_inner(
     if let Ok(er) = sqlx::query("INSERT INTO events (event_type, payload) VALUES (?, ?)")
         .bind(event_type)
         .bind(&payload_str)
-        .execute(&state.pool)
+        .execute(pool)
         .await
     {
         let event_id = er.last_insert_rowid();
@@ -1026,17 +1063,19 @@ pub async fn fetch_track_metadata(
     Path(id): Path<i64>,
     Json(payload): Json<SingleFetchRequest>,
 ) -> Result<Json<TrackResponse>, (StatusCode, String)> {
-    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
-    let track = fetch_track_metadata_inner(&state, id, &payload.provider).await?;
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let track = fetch_track_metadata_inner(&state, &user_pool, id, &payload.provider).await?;
     Ok(Json(track))
 }
 
-async fn broadcast_bulk_event(state: &AppState, event_type: &str, payload: serde_json::Value) {
+async fn broadcast_bulk_event(state: &AppState, pool: &sqlx::SqlitePool, event_type: &str, payload: serde_json::Value) {
     let payload_str = payload.to_string();
     if let Ok(er) = sqlx::query("INSERT INTO events (event_type, payload) VALUES (?, ?)")
         .bind(event_type)
         .bind(&payload_str)
-        .execute(&state.pool)
+        .execute(pool)
         .await
     {
         let event_id = er.last_insert_rowid();
@@ -1060,10 +1099,12 @@ pub async fn bulk_fetch_metadata(
     State(state): State<AppState>,
     Json(payload): Json<BulkFetchRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let total = payload.track_ids.len();
     for (idx, id) in payload.track_ids.iter().copied().enumerate() {
-        if let Err(e) = fetch_track_metadata_inner(&state, id, &payload.provider).await {
+        if let Err(e) = fetch_track_metadata_inner(&state, &user_pool, id, &payload.provider).await {
             error!("Failed to fetch metadata for track {}: {:?}", id, e);
         }
         
@@ -1073,7 +1114,7 @@ pub async fn bulk_fetch_metadata(
             "total": total,
             "track_id": id,
         });
-        broadcast_bulk_event(&state, "bulk.progress", progress_payload).await;
+        broadcast_bulk_event(&state, &user_pool, "bulk.progress", progress_payload).await;
 
         // Yield execution to avoid rate limits
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -1083,7 +1124,7 @@ pub async fn bulk_fetch_metadata(
         "action": "fetch",
         "total": total,
     });
-    broadcast_bulk_event(&state, "bulk.completed", completed_payload).await;
+    broadcast_bulk_event(&state, &user_pool, "bulk.completed", completed_payload).await;
 
     Ok(StatusCode::OK)
 }
@@ -1098,10 +1139,12 @@ pub async fn bulk_delete_tracks(
     State(state): State<AppState>,
     Json(payload): Json<BulkDeleteRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let total = payload.track_ids.len();
     for (idx, id) in payload.track_ids.iter().copied().enumerate() {
-        if let Err(e) = delete_track_inner(&state, id).await {
+        if let Err(e) = delete_track_inner(&state, &user_pool, id).await {
             error!("Failed to delete track {}: {:?}", id, e);
         }
         
@@ -1111,14 +1154,14 @@ pub async fn bulk_delete_tracks(
             "total": total,
             "track_id": id,
         });
-        broadcast_bulk_event(&state, "bulk.progress", progress_payload).await;
+        broadcast_bulk_event(&state, &user_pool, "bulk.progress", progress_payload).await;
     }
 
     let completed_payload = serde_json::json!({
         "action": "delete",
         "total": total,
     });
-    broadcast_bulk_event(&state, "bulk.completed", completed_payload).await;
+    broadcast_bulk_event(&state, &user_pool, "bulk.completed", completed_payload).await;
 
     Ok(StatusCode::OK)
 }

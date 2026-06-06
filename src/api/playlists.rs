@@ -37,6 +37,7 @@ pub struct ReorderPlaylistRequest {
 
 async fn log_and_broadcast_event(
     state: &AppState,
+    pool: &sqlx::SqlitePool,
     event_type: &str,
     payload: serde_json::Value,
 ) {
@@ -46,7 +47,7 @@ async fn log_and_broadcast_event(
     )
     .bind(event_type)
     .bind(&payload_str)
-    .execute(&state.pool)
+    .execute(pool)
     .await
     {
         let event_id = res.last_insert_rowid();
@@ -64,11 +65,14 @@ pub async fn get_playlists(
     claims: Claims,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<PlaylistResponse>>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let playlists = sqlx::query_as::<_, PlaylistResponse>(
         "SELECT id, name, cover_url, created_at FROM playlists WHERE user_id = ? ORDER BY created_at DESC"
     )
     .bind(&claims.sub)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -81,13 +85,16 @@ pub async fn create_playlist(
     Json(payload): Json<CreatePlaylistRequest>,
 ) -> Result<(StatusCode, Json<PlaylistResponse>), (StatusCode, String)> {
     claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let res = sqlx::query(
         "INSERT INTO playlists (user_id, name, cover_url) VALUES (?, ?, ?)"
     )
     .bind(&claims.sub)
     .bind(&payload.name)
     .bind(&payload.cover_url)
-    .execute(&state.pool)
+    .execute(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -97,12 +104,13 @@ pub async fn create_playlist(
         "SELECT id, name, cover_url, created_at FROM playlists WHERE id = ?"
     )
     .bind(playlist_id)
-    .fetch_one(&state.pool)
+    .fetch_one(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     log_and_broadcast_event(
         &state,
+        &user_pool,
         "playlist.created",
         serde_json::to_value(&playlist).unwrap_or(serde_json::Value::Null)
     ).await;
@@ -115,12 +123,15 @@ pub async fn get_playlist_by_id(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<PlaylistResponse>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let playlist = sqlx::query_as::<_, PlaylistResponse>(
         "SELECT id, name, cover_url, created_at FROM playlists WHERE id = ? AND user_id = ?"
     )
     .bind(id)
     .bind(&claims.sub)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Playlist not found".to_string()))?;
@@ -135,11 +146,14 @@ pub async fn update_playlist(
     Json(payload): Json<CreatePlaylistRequest>,
 ) -> Result<Json<PlaylistResponse>, (StatusCode, String)> {
     claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // Verify ownership
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(id)
         .bind(&claims.sub)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Playlist not found".to_string()))?;
@@ -150,7 +164,7 @@ pub async fn update_playlist(
     .bind(&payload.name)
     .bind(&payload.cover_url)
     .bind(id)
-    .execute(&state.pool)
+    .execute(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -158,12 +172,13 @@ pub async fn update_playlist(
         "SELECT id, name, cover_url, created_at FROM playlists WHERE id = ?"
     )
     .bind(id)
-    .fetch_one(&state.pool)
+    .fetch_one(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     log_and_broadcast_event(
         &state,
+        &user_pool,
         "playlist.updated",
         serde_json::json!({ "id": id })
     ).await;
@@ -177,23 +192,27 @@ pub async fn delete_playlist(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // Verify ownership
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(id)
         .bind(&claims.sub)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Playlist not found".to_string()))?;
 
     sqlx::query("DELETE FROM playlists WHERE id = ?")
         .bind(id)
-        .execute(&state.pool)
+        .execute(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     log_and_broadcast_event(
         &state,
+        &user_pool,
         "playlist.deleted",
         serde_json::json!({ "id": id })
     ).await;
@@ -206,11 +225,14 @@ pub async fn get_playlist_tracks(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<TrackResponse>>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // Verify ownership of the playlist
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(id)
         .bind(&claims.sub)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Playlist not found".to_string()))?;
@@ -225,7 +247,7 @@ pub async fn get_playlist_tracks(
          ORDER BY pt.position, t.date_added"
     )
     .bind(id)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -239,11 +261,14 @@ pub async fn add_track_to_playlist(
     Json(payload): Json<AddTrackRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // Verify ownership
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(id)
         .bind(&claims.sub)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Playlist not found".to_string()))?;
@@ -254,7 +279,7 @@ pub async fn add_track_to_playlist(
     )
     .bind(id)
     .bind(payload.track_id)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -265,7 +290,7 @@ pub async fn add_track_to_playlist(
     // Get max position
     let max_pos = sqlx::query("SELECT MAX(position) FROM playlist_tracks WHERE playlist_id = ?")
         .bind(id)
-        .fetch_one(&state.pool)
+        .fetch_one(&user_pool)
         .await
         .map(|r| r.get::<Option<i64>, _>(0).unwrap_or(-1))
         .unwrap_or(-1);
@@ -278,12 +303,13 @@ pub async fn add_track_to_playlist(
     .bind(id)
     .bind(payload.track_id)
     .bind(next_pos)
-    .execute(&state.pool)
+    .execute(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     log_and_broadcast_event(
         &state,
+        &user_pool,
         "playlist.updated",
         serde_json::json!({ "id": id })
     ).await;
@@ -297,11 +323,14 @@ pub async fn remove_track_from_playlist(
     Path((playlist_id, track_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // Verify ownership
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(playlist_id)
         .bind(&claims.sub)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Playlist not found".to_string()))?;
@@ -311,7 +340,7 @@ pub async fn remove_track_from_playlist(
     )
     .bind(playlist_id)
     .bind(track_id)
-    .execute(&state.pool)
+    .execute(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -320,7 +349,7 @@ pub async fn remove_track_from_playlist(
         "SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY position"
     )
     .bind(playlist_id)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .unwrap_or_default();
 
@@ -333,13 +362,14 @@ pub async fn remove_track_from_playlist(
         .bind(new_pos)
         .bind(playlist_id)
         .bind(track_id_val)
-        .execute(&state.pool)
+        .execute(&user_pool)
         .await
         .ok();
     }
 
     log_and_broadcast_event(
         &state,
+        &user_pool,
         "playlist.updated",
         serde_json::json!({ "id": playlist_id })
     ).await;
@@ -354,11 +384,14 @@ pub async fn reorder_playlist_tracks(
     Json(payload): Json<ReorderPlaylistRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // Verify ownership
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(playlist_id)
         .bind(&claims.sub)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Playlist not found".to_string()))?;
@@ -367,7 +400,7 @@ pub async fn reorder_playlist_tracks(
         "SELECT track_id, position FROM playlist_tracks WHERE playlist_id = ? ORDER BY position"
     )
     .bind(playlist_id)
-    .fetch_all(&state.pool)
+    .fetch_all(&user_pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -393,7 +426,7 @@ pub async fn reorder_playlist_tracks(
     let moved_item = tracks.remove(from_index);
     tracks.insert(to_index, moved_item);
 
-    let mut transaction = state.pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut transaction = user_pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     for (new_pos, tr) in tracks.iter().enumerate() {
         let pos_val = new_pos as i64;
@@ -412,6 +445,7 @@ pub async fn reorder_playlist_tracks(
 
     log_and_broadcast_event(
         &state,
+        &user_pool,
         "playlist.updated",
         serde_json::json!({ "id": playlist_id, "fromIndex": payload.from_index, "toIndex": payload.to_index })
     ).await;
@@ -431,17 +465,20 @@ pub async fn bulk_add_tracks_to_playlist(
     Json(payload): Json<BulkAddTracksRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     // 1. Verify ownership of the playlist
     let _existing = sqlx::query("SELECT id FROM playlists WHERE id = ? AND user_id = ?")
         .bind(id)
         .bind(&claims.sub)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Playlist not found".to_string()))?;
 
     // 2. Start a transaction
-    let mut tx = state.pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut tx = user_pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // 3. Get current max position
     let max_pos = sqlx::query("SELECT MAX(position) FROM playlist_tracks WHERE playlist_id = ?")
@@ -474,7 +511,7 @@ pub async fn bulk_add_tracks_to_playlist(
                 "total": total,
                 "track_id": track_id,
             });
-            log_and_broadcast_event(&state, "bulk.progress", progress_payload).await;
+            log_and_broadcast_event(&state, &user_pool, "bulk.progress", progress_payload).await;
             continue;
         }
 
@@ -498,7 +535,7 @@ pub async fn bulk_add_tracks_to_playlist(
             "total": total,
             "track_id": track_id,
         });
-        log_and_broadcast_event(&state, "bulk.progress", progress_payload).await;
+        log_and_broadcast_event(&state, &user_pool, "bulk.progress", progress_payload).await;
     }
 
     // 5. Commit transaction
@@ -507,6 +544,7 @@ pub async fn bulk_add_tracks_to_playlist(
     if added_any {
         log_and_broadcast_event(
             &state,
+            &user_pool,
             "playlist.updated",
             serde_json::json!({ "id": id })
         ).await;
@@ -516,7 +554,7 @@ pub async fn bulk_add_tracks_to_playlist(
         "action": "playlist",
         "total": total,
     });
-    log_and_broadcast_event(&state, "bulk.completed", completed_payload).await;
+    log_and_broadcast_event(&state, &user_pool, "bulk.completed", completed_payload).await;
 
     Ok(StatusCode::OK)
 }
