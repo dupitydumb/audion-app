@@ -107,7 +107,9 @@ async fn authenticate(state: &AppState, params: &SubsonicParams) -> Result<DbUse
         }
 
         if let Some(ref db_pwd) = user.subsonic_password {
-            if db_pwd == &actual_password {
+            let decrypted_pwd = crate::auth::decrypt_subsonic_password(db_pwd, &state.config.jwt_secret)
+                .unwrap_or_else(|_| db_pwd.clone());
+            if decrypted_pwd == actual_password {
                 return Ok(user);
             }
         }
@@ -122,7 +124,9 @@ async fn authenticate(state: &AppState, params: &SubsonicParams) -> Result<DbUse
     // Check token 't' and salt 's'
     if let (Some(token), Some(salt)) = (&params.t, &params.s) {
         if let Some(ref db_pwd) = user.subsonic_password {
-            let combined = format!("{}{}", db_pwd, salt);
+            let decrypted_pwd = crate::auth::decrypt_subsonic_password(db_pwd, &state.config.jwt_secret)
+                .unwrap_or_else(|_| db_pwd.clone());
+            let combined = format!("{}{}", decrypted_pwd, salt);
             let computed = format!("{:x}", md5::compute(combined));
             if &computed == token {
                 return Ok(user);
@@ -130,6 +134,7 @@ async fn authenticate(state: &AppState, params: &SubsonicParams) -> Result<DbUse
         }
         return Err("Invalid token credentials".to_string());
     }
+
 
     Err("Missing authentication credentials".to_string())
 }

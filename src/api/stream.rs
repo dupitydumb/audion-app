@@ -200,6 +200,7 @@ pub async fn stream_track(
 }
 
 pub async fn get_track_cover(
+    _claims: Claims,
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {

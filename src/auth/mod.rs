@@ -48,11 +48,16 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
 }
 
 pub fn generate_token(user_id: &str, username: &str, role: &str, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
+    let exp_days = std::env::var("AUDION_JWT_EXPIRATION_DAYS")
+        .ok()
+        .and_then(|val| val.parse::<u64>().ok())
+        .unwrap_or(7); // 7 days default
+    
     let expiration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
-        + (30 * 24 * 3600); // 30 days expiration
+        + (exp_days * 24 * 3600);
 
     let claims = Claims {
         sub: user_id.to_string(),
@@ -78,4 +83,81 @@ pub fn verify_token(token: &str, secret: &str) -> Result<Claims, jsonwebtoken::e
     Ok(token_data.claims)
 }
 
+fn derive_key(secret: &str) -> [u8; 32] {
+    let mut key = [0u8; 32];
+    let bytes = secret.as_bytes();
+    if bytes.is_empty() {
+        return key;
+    }
+    for (i, &b) in bytes.iter().cycle().take(32).enumerate() {
+        key[i] = b;
+    }
+    key
+}
+
+pub fn encrypt_subsonic_password(password: &str, secret: &str) -> Result<String, String> {
+    use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce};
+    use rand::Rng;
+
+    let key_bytes = derive_key(secret);
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+        .map_err(|e| format!("Failed to create cipher: {}", e))?;
+    
+    let mut nonce_bytes = [0u8; 12];
+    rand::thread_rng().fill(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    
+    let ciphertext = cipher
+        .encrypt(nonce, password.as_bytes())
+        .map_err(|e| format!("Encryption failed: {}", e))?;
+    
+    let mut combined = Vec::with_capacity(12 + ciphertext.len());
+    combined.extend_from_slice(&nonce_bytes);
+    combined.extend_from_slice(&ciphertext);
+    
+    Ok(hex::encode(combined))
+}
+
+pub fn decrypt_subsonic_password(encrypted_hex: &str, secret: &str) -> Result<String, String> {
+    use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce};
+
+    let combined = hex::decode(encrypted_hex)
+        .map_err(|e| format!("Invalid hex: {}", e))?;
+    
+    if combined.len() < 12 {
+        return Err("Encrypted data too short".to_string());
+    }
+    
+    let (nonce_bytes, ciphertext) = combined.split_at(12);
+    let key_bytes = derive_key(secret);
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+        .map_err(|e| format!("Failed to create cipher: {}", e))?;
+    
+    let nonce = Nonce::from_slice(nonce_bytes);
+    let decrypted = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|e| format!("Decryption failed: {}", e))?;
+    
+    String::from_utf8(decrypted)
+        .map_err(|e| format!("Invalid UTF-8 in decrypted string: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_subsonic_password_encryption_decryption() {
+        let secret = "my-test-secret-key-123456";
+        let password = "superSecretPassword!";
+        
+        let encrypted = encrypt_subsonic_password(password, secret).unwrap();
+        assert_ne!(password, encrypted);
+        
+        let decrypted = decrypt_subsonic_password(&encrypted, secret).unwrap();
+        assert_eq!(password, decrypted);
+    }
+}
+
 pub mod middleware;
+

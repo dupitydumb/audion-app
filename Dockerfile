@@ -52,5 +52,14 @@ ENV RUST_LOG=info
 # Define data volume
 VOLUME /data
 
-# Run application
+# Create non-root user and group
+RUN groupadd -g 10001 audion && \
+    useradd -u 10001 -g audion -m -s /usr/sbin/nologin audion
+
+# Ensure directories exist and have proper ownership
+RUN mkdir -p /data && chown -R audion:audion /app /data
+
+# Run application as non-root user
+USER audion
 CMD ["/app/audion-server"]
+

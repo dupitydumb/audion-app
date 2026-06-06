@@ -40,10 +40,24 @@ struct ServerInfoResponse {
 }
 
 pub fn create_router(state: AppState) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors_origin = std::env::var("AUDION_CORS_ORIGIN").unwrap_or_else(|_| "*".to_string());
+    let cors = if cors_origin == "*" {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        match cors_origin.parse::<axum::http::HeaderValue>() {
+            Ok(origin) => CorsLayer::new()
+                .allow_origin(origin)
+                .allow_methods(Any)
+                .allow_headers(Any),
+            Err(_) => CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        }
+    };
 
     let public_dir = state.config.public_dir.clone();
     let serve_dir = tower_http::services::ServeDir::new(&public_dir)
@@ -101,7 +115,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/events", get(events::handle_events))
         .fallback_service(serve_dir)
         .layer(cors)
-        .layer(DefaultBodyLimit::max(1024 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(
+            std::env::var("AUDION_MAX_BODY_SIZE")
+                .ok()
+                .and_then(|val| val.parse::<usize>().ok())
+                .unwrap_or(250 * 1024 * 1024) // 250MB default
+        ))
         .with_state(state)
 }
 

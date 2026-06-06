@@ -148,25 +148,43 @@ pub async fn update_profile(
         _ => user.username.clone(),
     };
 
-    let updated_password_hash = match payload.new_password {
-        Some(ref p) if !p.trim().is_empty() => {
+    // Update user row
+    if let Some(ref p) = payload.new_password {
+        if !p.trim().is_empty() {
             if p.len() < 6 {
                 return Err((StatusCode::BAD_REQUEST, "New password must be at least 6 characters long".to_string()));
             }
-            hash_password(p)
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to hash password: {}", e)))?
+            let password_hash = hash_password(p)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to hash password: {}", e)))?;
+            
+            let encrypted_subsonic = crate::auth::encrypt_subsonic_password(p, &state.config.jwt_secret)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to encrypt subsonic password: {}", e)))?;
+            
+            sqlx::query("UPDATE users SET username = ?, password_hash = ?, subsonic_password = ? WHERE id = ?")
+                .bind(&updated_username)
+                .bind(&password_hash)
+                .bind(&encrypted_subsonic)
+                .bind(&user_id)
+                .execute(&state.pool)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        } else {
+            sqlx::query("UPDATE users SET username = ? WHERE id = ?")
+                .bind(&updated_username)
+                .bind(&user_id)
+                .execute(&state.pool)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
-        _ => user.password_hash.clone(),
-    };
+    } else {
+        sqlx::query("UPDATE users SET username = ? WHERE id = ?")
+            .bind(&updated_username)
+            .bind(&user_id)
+            .execute(&state.pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
-    // Update user row
-    sqlx::query("UPDATE users SET username = ?, password_hash = ? WHERE id = ?")
-        .bind(&updated_username)
-        .bind(&updated_password_hash)
-        .bind(&user_id)
-        .execute(&state.pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Generate new token
     let token = generate_token(&user_id, &updated_username, &user.role, &state.config.jwt_secret)

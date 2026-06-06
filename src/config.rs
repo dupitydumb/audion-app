@@ -13,8 +13,21 @@ pub struct Config {
 impl Config {
     pub fn load() -> Self {
         let admin_user = std::env::var("AUDION_ADMIN_USER").unwrap_or_else(|_| "admin".to_string());
-        let admin_password_raw = std::env::var("AUDION_ADMIN_PASSWORD").unwrap_or_else(|_| "changeme".to_string());
-        let jwt_secret = std::env::var("AUDION_JWT_SECRET").unwrap_or_else(|_| "your-secret-key-here-super-secure".to_string());
+        
+        let admin_password_raw = std::env::var("AUDION_ADMIN_PASSWORD").unwrap_or_else(|_| {
+            eprintln!("[SECURITY WARNING] AUDION_ADMIN_PASSWORD is not set. Using default password 'changeme'. Please change it!");
+            "changeme".to_string()
+        });
+        
+        let jwt_secret = std::env::var("AUDION_JWT_SECRET").unwrap_or_else(|_| {
+            eprintln!("[SECURITY WARNING] AUDION_JWT_SECRET is not set. Using insecure default secret key. DO NOT DO THIS IN PRODUCTION!");
+            "your-secret-key-here-super-secure".to_string()
+        });
+
+        if jwt_secret == "your-secret-key-here-change-this-in-production" {
+            eprintln!("[SECURITY WARNING] AUDION_JWT_SECRET is set to the default docker-compose secret. Please configure a unique secret in production!");
+        }
+
         
         let data_dir_str = std::env::var("AUDION_DATA_DIR").unwrap_or_else(|_| "./data".to_string());
         let data_dir = PathBuf::from(data_dir_str);

@@ -94,6 +94,9 @@ pub async fn create_user(
     let password_hash = hash_password(&payload.password)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Password hashing failed: {}", e)))?;
 
+    let encrypted_subsonic_password = crate::auth::encrypt_subsonic_password(&payload.password, &state.config.jwt_secret)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Subsonic password encryption failed: {}", e)))?;
+
     sqlx::query(
         "INSERT INTO users (id, username, password_hash, role, is_enabled, subsonic_password) VALUES (?, ?, ?, ?, 1, ?)"
     )
@@ -101,7 +104,7 @@ pub async fn create_user(
     .bind(&payload.username)
     .bind(&password_hash)
     .bind(&payload.role)
-    .bind(&payload.password)
+    .bind(&encrypted_subsonic_password)
     .execute(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -210,6 +213,9 @@ pub async fn update_user(
         let password_hash = hash_password(p)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Password hashing failed: {}", e)))?;
         
+        let encrypted_subsonic_password = crate::auth::encrypt_subsonic_password(p, &state.config.jwt_secret)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Subsonic password encryption failed: {}", e)))?;
+        
         sqlx::query(
             "UPDATE users SET username = ?, password_hash = ?, role = ?, listenbrainz_token = ?, is_enabled = ?, subsonic_password = ? WHERE id = ?"
         )
@@ -218,7 +224,7 @@ pub async fn update_user(
         .bind(&updated_role)
         .bind(&updated_lb_token)
         .bind(updated_enabled)
-        .bind(p)
+        .bind(&encrypted_subsonic_password)
         .bind(&id)
         .execute(&state.pool)
         .await

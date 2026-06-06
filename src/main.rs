@@ -46,25 +46,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         let hash = auth::hash_password(&config.admin_password_raw)
             .map_err(|e| format!("Failed to hash password: {}", e))?;
+
+        let encrypted_subsonic_password = auth::encrypt_subsonic_password(&config.admin_password_raw, &config.jwt_secret)
+            .map_err(|e| format!("Failed to encrypt subsonic password: {}", e))?;
         
         sqlx::query("INSERT INTO users (id, username, password_hash, role, subsonic_password) VALUES (?, ?, ?, 'Admin', ?)")
             .bind(&admin_id)
             .bind(&config.admin_user)
             .bind(&hash)
-            .bind(&config.admin_password_raw)
+            .bind(&encrypted_subsonic_password)
             .execute(&pool)
             .await?;
 
         info!("Admin user '{}' bootstrapped successfully.", config.admin_user);
     } else {
         info!("Database contains existing users. Skipping admin bootstrap.");
+        let encrypted_subsonic_password = auth::encrypt_subsonic_password(&config.admin_password_raw, &config.jwt_secret)
+            .unwrap_or_else(|_| config.admin_password_raw.clone());
+
         // Ensure the bootstrapped admin user is marked as Admin and has subsonic_password populated if null
         let _ = sqlx::query("UPDATE users SET role = 'Admin', subsonic_password = COALESCE(subsonic_password, ?) WHERE username = ?")
-            .bind(&config.admin_password_raw)
+            .bind(&encrypted_subsonic_password)
             .bind(&config.admin_user)
             .execute(&pool)
             .await;
     }
+
 
     // Initialize Event Bus
     let event_bus = EventBus::new();
