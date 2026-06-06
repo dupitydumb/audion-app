@@ -5,6 +5,7 @@ mod auth;
 mod events;
 mod scanner;
 mod api;
+mod tunnel;
 
 use std::sync::Arc;
 use tracing::{info, warn, error};
@@ -77,7 +78,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_bus = EventBus::new();
 
     // Create AppState
-    let state = AppState::new(pool, config.clone(), event_bus);
+    let state = AppState::new(pool, config.clone(), event_bus).await;
+
+    // Auto-start public tunnel if enabled in settings
+    state.tunnel_manager.lock().await.auto_start_if_enabled().await;
 
     // Start directory watcher
     scanner::start_file_watcher(state.clone());

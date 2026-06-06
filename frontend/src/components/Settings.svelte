@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Shield, Database, Key, HelpCircle, LogOut, RefreshCw, FolderSync, Trash2, User, Users, Cpu, FileText, CheckCircle2, AlertTriangle, Edit2, UserPlus, Check, X } from '@lucide/svelte';
+  import { Shield, Database, Key, HelpCircle, LogOut, RefreshCw, FolderSync, Trash2, User, Users, Cpu, FileText, CheckCircle2, AlertTriangle, Edit2, UserPlus, Check, X, Globe, Copy, ExternalLink, Lock } from '@lucide/svelte';
 
   // Props in Svelte 5
   let { token, username, role, listenbrainzToken, scanStatus, fetcherStatus, onLogout, addToast, onProfileUpdate } = $props<{
@@ -14,7 +14,7 @@
     onProfileUpdate: (newToken: string, newUsername: string, newRole: string, newLbToken: string) => void;
   }>();
 
-  let activeTab = $state<'profile' | 'users' | 'library' | 'system'>('profile');
+  let activeTab = $state<'profile' | 'users' | 'library' | 'tunnel' | 'system'>('profile');
 
   // Profile Form States
   let currentPassword = $state('');
@@ -366,6 +366,147 @@
       fetchUsers();
     }
   });
+
+  // Public Access Tunnel States & Handlers
+  let tunnelConfig = $state<{ provider: 'localhost.run' | 'ngrok' | 'cloudflare'; token: string; custom_domain: string; enabled: boolean }>({
+    provider: 'localhost.run',
+    token: '',
+    custom_domain: '',
+    enabled: false
+  });
+
+  let tunnelStatus = $state<{ active: boolean; provider: 'localhost.run' | 'ngrok' | 'cloudflare' | null; url: string | null; is_connecting: boolean; error: string | null }>({
+    active: false,
+    provider: null,
+    url: null,
+    is_connecting: false,
+    error: null
+  });
+
+  let isSavingTunnel = $state(false);
+  let isTogglingTunnel = $state(false);
+  let copied = $state(false);
+  let pollInterval: any = null;
+
+  async function fetchTunnelInfo() {
+    try {
+      const res = await fetch('/api/admin/tunnel', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        tunnelConfig.provider = data.config.provider;
+        tunnelConfig.token = data.config.token || '';
+        tunnelConfig.custom_domain = data.config.custom_domain || '';
+        tunnelConfig.enabled = data.config.enabled;
+        
+        tunnelStatus.active = data.status.active;
+        tunnelStatus.provider = data.status.provider;
+        tunnelStatus.url = data.status.url;
+        tunnelStatus.is_connecting = data.status.is_connecting;
+        tunnelStatus.error = data.status.error;
+      }
+    } catch (e) {
+      console.error('Failed to fetch tunnel info', e);
+    }
+  }
+
+  async function handleToggleTunnel() {
+    isTogglingTunnel = true;
+    try {
+      const res = await fetch('/api/admin/tunnel/toggle', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        tunnelStatus.active = data.status.active;
+        tunnelStatus.provider = data.status.provider;
+        tunnelStatus.url = data.status.url;
+        tunnelStatus.is_connecting = data.status.is_connecting;
+        tunnelStatus.error = data.status.error;
+        addToast(
+          tunnelStatus.active || tunnelStatus.is_connecting ? 'Public access tunnel started!' : 'Public access tunnel stopped.',
+          'success'
+        );
+      } else {
+        const text = await res.text();
+        throw new Error(text || 'Failed to toggle tunnel');
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Failed to toggle tunnel', 'error');
+    } finally {
+      isTogglingTunnel = false;
+    }
+  }
+
+  async function handleSaveTunnelConfig(e: SubmitEvent) {
+    e.preventDefault();
+    isSavingTunnel = true;
+    try {
+      const res = await fetch('/api/admin/tunnel', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          provider: tunnelConfig.provider,
+          token: tunnelConfig.token.trim() || null,
+          custom_domain: tunnelConfig.custom_domain.trim() || null,
+          enabled: tunnelConfig.enabled
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        tunnelConfig.provider = data.config.provider;
+        tunnelConfig.token = data.config.token || '';
+        tunnelConfig.custom_domain = data.config.custom_domain || '';
+        tunnelConfig.enabled = data.config.enabled;
+        
+        tunnelStatus.active = data.status.active;
+        tunnelStatus.provider = data.status.provider;
+        tunnelStatus.url = data.status.url;
+        tunnelStatus.is_connecting = data.status.is_connecting;
+        tunnelStatus.error = data.status.error;
+        addToast('Tunnel configuration updated successfully', 'success');
+      } else {
+        const text = await res.text();
+        throw new Error(text || 'Failed to update tunnel config');
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Failed to update config', 'error');
+    } finally {
+      isSavingTunnel = false;
+    }
+  }
+
+  function handleCopy(text: string) {
+    navigator.clipboard.writeText(text);
+    copied = true;
+    addToast('URL copied to clipboard!', 'success');
+    setTimeout(() => copied = false, 2000);
+  }
+
+  $effect(() => {
+    if (activeTab === 'tunnel' && role === 'Admin') {
+      fetchTunnelInfo();
+    }
+  });
+
+  $effect(() => {
+    if (tunnelStatus.is_connecting && activeTab === 'tunnel') {
+      pollInterval = setInterval(fetchTunnelInfo, 1500);
+    } else {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    }
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  });
 </script>
 
 <div class="page-header">
@@ -398,6 +539,14 @@
       <FolderSync size={16} /> Library Control
     </button>
     {/if}
+    {#if role === 'Admin'}
+      <button 
+        onclick={() => activeTab = 'tunnel'} 
+        class="tab-btn {activeTab === 'tunnel' ? 'active' : ''}"
+      >
+        <Globe size={16} /> Public Access
+      </button>
+    {/if}
     <button 
       onclick={() => activeTab = 'system'} 
       class="tab-btn {activeTab === 'system' ? 'active' : ''}"
@@ -424,6 +573,7 @@
         </button>
       </div>
 
+      {#if role !== 'StreamOnly'}
       <div class="glass-card" style="padding: 1.5rem;">
         <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
           <Key size={18} style="color: var(--accent);" />
@@ -497,6 +647,7 @@
           </div>
         </form>
       </div>
+      {/if}
 
       <div class="glass-card" style="padding: 1.5rem;">
         <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
@@ -897,6 +1048,218 @@
 
     </div>
 
+  {:else if activeTab === 'tunnel' && role === 'Admin'}
+    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+      
+      <!-- Tunnel Status & Control Card -->
+      <div class="glass-card" style="padding: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+        <div>
+          <h3 style="font-family: var(--font-heading); font-size: 1.15rem; font-weight: 600; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.5rem;">
+            <Globe size={20} style="color: var(--accent);" /> Public Access Tunnel
+          </h3>
+          <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">Expose your local server securely to the public internet.</p>
+        </div>
+        
+        <div style="display: flex; align-items: center; gap: 1rem;">
+          {#if tunnelStatus.active}
+            <span style="background: rgba(34,197,94,0.1); color: #22c55e; padding: 0.35rem 0.75rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem; border: 1px solid rgba(34,197,94,0.2);">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block;"></span> Active
+            </span>
+          {:else if tunnelStatus.is_connecting}
+            <span style="background: rgba(168,85,247,0.1); color: var(--accent); padding: 0.35rem 0.75rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem; border: 1px solid rgba(168,85,247,0.2);">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; animation: pulse 1.5s infinite;"></span> Connecting...
+            </span>
+          {:else}
+            <span style="background: rgba(239,68,68,0.1); color: #ef4444; padding: 0.35rem 0.75rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem; border: 1px solid rgba(239,68,68,0.2);">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: #ef4444; display: inline-block;"></span> Inactive
+            </span>
+          {/if}
+
+          <button 
+            onclick={handleToggleTunnel} 
+            class="btn {tunnelStatus.active || tunnelStatus.is_connecting ? 'btn-danger' : 'btn-primary'}" 
+            style="display: flex; gap: 0.5rem; align-items: center;"
+            disabled={isTogglingTunnel}
+          >
+            {#if isTogglingTunnel}
+              <RefreshCw size={16} class="animate-spin" style="animation: spin 1s linear infinite;" /> Loading...
+            {:else if tunnelStatus.active || tunnelStatus.is_connecting}
+              Stop Tunnel
+            {:else}
+              Start Tunnel
+            {/if}
+          </button>
+        </div>
+      </div>
+
+      <!-- Error Message Card -->
+      {#if tunnelStatus.error}
+        <div class="glass-card border-danger" style="padding: 1rem 1.5rem; background: rgba(239, 68, 68, 0.04); border: 1px solid rgba(239, 68, 68, 0.2); display: flex; align-items: center; gap: 0.75rem;">
+          <AlertTriangle size={20} style="color: #ef4444; flex-shrink: 0;" />
+          <div style="font-size: 0.85rem; color: var(--text-primary);">
+            <strong style="color: #ef4444;">Tunnel Connection Error:</strong> {tunnelStatus.error}
+          </div>
+        </div>
+      {/if}
+
+      <!-- Tunnel Information Card (When Active) -->
+      {#if tunnelStatus.active && tunnelStatus.url}
+        <div class="glass-card" style="padding: 1.5rem;">
+          <h3 style="font-family: var(--font-heading); font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem;">Connection Information</h3>
+          
+          <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+            <!-- Public URL row -->
+            <div style="background: rgba(0,0,0,0.2); border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+              <div>
+                <div style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">Public URL</div>
+                <a href={tunnelStatus.url} target="_blank" rel="noreferrer" style="font-family: monospace; font-size: 1rem; color: var(--accent); font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 0.35rem;">
+                  {tunnelStatus.url} <ExternalLink size={14} />
+                </a>
+              </div>
+              <button onclick={() => handleCopy(tunnelStatus.url || '')} class="btn btn-secondary" style="display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0.75rem; font-size: 0.85rem;">
+                {#if copied}
+                  <Check size={16} /> Copied!
+                {:else}
+                  <Copy size={16} /> Copy Link
+                {/if}
+              </button>
+            </div>
+
+            <!-- QR Code and Subsonic setup columns -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem;">
+              <!-- QR Code Card -->
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 1.25rem; border-radius: 8px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                <h4 style="font-family: var(--font-heading); font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem;">Scan on Mobile</h4>
+                <div style="background: white; padding: 8px; border-radius: 8px; display: inline-block;">
+                  <img 
+                    src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&color=000000&data={encodeURIComponent(tunnelStatus.url)}" 
+                    alt="Scan to open on mobile" 
+                    style="display: block; width: 140px; height: 140px;" 
+                  />
+                </div>
+                <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.75rem; max-width: 200px;">Scan this QR code to instantly open the player on your phone.</p>
+              </div>
+
+              <!-- Subsonic setup instructions -->
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 1.25rem; border-radius: 8px; display: flex; flex-direction: column; justify-content: center;">
+                <h4 style="font-family: var(--font-heading); font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.4rem;">
+                  <Lock size={16} style="color: var(--accent);" /> Subsonic Integration
+                </h4>
+                <p style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4; margin-bottom: 0.75rem;">
+                  To stream using external apps (like Symfonium or play:Sub) on cellular or remote networks, use these details:
+                </p>
+                <div style="font-size: 0.8rem; background: rgba(0,0,0,0.15); padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); font-family: monospace; display: flex; flex-direction: column; gap: 0.35rem;">
+                  <div>Server URL: <span style="color: var(--accent); word-break: break-all;">{tunnelStatus.url}</span></div>
+                  <div>Username: <span style="color: var(--text-primary);">{username}</span></div>
+                  <div>Password: <span style="color: var(--text-muted);">[Your Account Password]</span></div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      {/if}
+
+      <!-- Configuration Card -->
+      <div class="glass-card" style="padding: 1.5rem;">
+        <h3 style="font-family: var(--font-heading); font-size: 1.1rem; font-weight: 600; margin-bottom: 1.25rem;">Tunnel Configuration</h3>
+        
+        <form onsubmit={handleSaveTunnelConfig}>
+          <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+            
+            <div class="form-group">
+              <label class="form-label" for="tunnel-provider">Tunnel Provider</label>
+              <select 
+                id="tunnel-provider" 
+                class="form-input" 
+                bind:value={tunnelConfig.provider}
+                style="width: 100%; height: auto; padding: 0.5rem 0.75rem;"
+              >
+                <option value="localhost.run">localhost.run (One-Click, Free, Anonymous)</option>
+                <option value="ngrok">ngrok (Free/Paid Account, Authtoken Required)</option>
+                <option value="cloudflare">Cloudflare Tunnel (Free Account, Token Required)</option>
+              </select>
+            </div>
+
+            {#if tunnelConfig.provider === 'localhost.run'}
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 1rem; border-radius: 6px; font-size: 0.85rem; line-height: 1.4; color: var(--text-secondary);">
+                <strong>About localhost.run:</strong>
+                <ul style="margin: 0.5rem 0 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.25rem;">
+                  <li>Does not require any accounts, installations, or key configurations.</li>
+                  <li>Generates a dynamic public HTTPS domain (e.g., <code style="background: rgba(0,0,0,0.25); padding: 0.1rem 0.3rem;">*.lhr.life</code>) every time you start the tunnel.</li>
+                </ul>
+              </div>
+            {/if}
+
+            {#if tunnelConfig.provider === 'ngrok'}
+              <div class="form-group">
+                <label class="form-label" for="ngrok-token">ngrok Authtoken <span style="color: var(--danger);">*</span></label>
+                <input 
+                  type="password" 
+                  id="ngrok-token" 
+                  class="form-input" 
+                  style="width: 100%;" 
+                  placeholder="Paste your ngrok Authtoken here" 
+                  bind:value={tunnelConfig.token}
+                  required
+                />
+                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.35rem;">
+                  Get your Authtoken by signing up at <a href="https://ngrok.com" target="_blank" rel="noreferrer" style="color: var(--accent);">ngrok.com</a> (Free tier supports custom or dynamic subdomains).
+                </p>
+              </div>
+            {/if}
+
+            {#if tunnelConfig.provider === 'cloudflare'}
+              <div style="display: flex; flex-direction: column; gap: 1rem;">
+                <div class="form-group">
+                  <label class="form-label" for="cf-token">Cloudflare Tunnel Token <span style="color: var(--danger);">*</span></label>
+                  <input 
+                    type="password" 
+                    id="cf-token" 
+                    class="form-input" 
+                    style="width: 100%;" 
+                    placeholder="Paste your Cloudflare Tunnel Token here" 
+                    bind:value={tunnelConfig.token}
+                    required
+                  />
+                  <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.35rem;">
+                    Obtained from Cloudflare Zero Trust Dashboard under Access &rarr; Tunnels. Select 'Cloudflared' connector to copy the token.
+                  </p>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="cf-domain">Custom Domain Name (Optional)</label>
+                  <input 
+                    type="text" 
+                    id="cf-domain" 
+                    class="form-input" 
+                    style="width: 100%;" 
+                    placeholder="music.yourdomain.com" 
+                    bind:value={tunnelConfig.custom_domain}
+                  />
+                  <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.35rem;">
+                    Display name for the connection. Note that you must still map this domain to your tunnel inside the Cloudflare Dashboard.
+                  </p>
+                </div>
+              </div>
+            {/if}
+
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
+              <button type="submit" class="btn btn-primary" style="display: flex; gap: 0.5rem; align-items: center;" disabled={isSavingTunnel}>
+                {#if isSavingTunnel}
+                  <RefreshCw size={16} class="animate-spin" style="animation: spin 1s linear infinite;" /> Saving...
+                {:else}
+                  Save Configuration
+                {/if}
+              </button>
+            </div>
+
+          </div>
+        </form>
+      </div>
+
+    </div>
+
   <!-- System Info Tab -->
   {:else if activeTab === 'system'}
     <div style="display: flex; flex-direction: column; gap: 1.5rem;">
@@ -956,6 +1319,11 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
   }
 
   .settings-container {

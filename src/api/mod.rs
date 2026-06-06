@@ -10,6 +10,7 @@ pub mod events;
 pub mod library;
 pub mod users;
 pub mod subsonic;
+pub mod tunnel;
 
 use axum::{
     routing::{get, post, put, delete},
@@ -72,6 +73,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/profile", put(auth::update_profile))
         .route("/api/admin/users", get(users::list_users).post(users::create_user))
         .route("/api/admin/users/:id", put(users::update_user).delete(users::delete_user))
+        .route("/api/admin/tunnel", get(tunnel::get_tunnel_info).put(tunnel::update_tunnel_config))
+        .route("/api/admin/tunnel/toggle", post(tunnel::toggle_tunnel))
         .route("/rest/ping.view", get(subsonic::ping).post(subsonic::ping))
         .route("/rest/getLicense.view", get(subsonic::get_license).post(subsonic::get_license))
         .route("/rest/getMusicFolders.view", get(subsonic::get_music_folders).post(subsonic::get_music_folders))

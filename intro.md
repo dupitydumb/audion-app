@@ -21,6 +21,7 @@ Once you pair your Audion app with your Audion Server, you unlock a suite of pow
 🖼️ Auto Artwork Extraction: Embedded cover art is automatically extracted and served as web-friendly URLs.
 ✍️ Synced Lyrics on the Fly: Audion Server integrates with LRCLIB to automatically fetch synchronized and plain-text lyrics when they aren't embedded in your files.
 📁 Offline Listening: If you're on the go, you can download/resolve tracks from your server directly into your local Audion app storage to listen offline.
+📻 Subsonic Client Support: Stream your library using standard Subsonic-compliant music players (e.g. Symfonium, DSub, play:Sub, Feishin, etc.) directly on your phone, tablet, or desktop with standard password or token authentication.
 🌟 What are the Benefits?
 🔒 Complete Data Privacy: No third-party servers, no analytics trackers, no account registration on external clouds. Your tracks, playlists, and listening history stay on your hardware.
 ⚡ Lightweight & Fast: Built on a Rust web backend (axum) and SQLite (sqlx), the server is highly optimized. It runs smoothly with minimal CPU and memory footprints.

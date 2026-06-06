@@ -137,6 +137,14 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_play_log_user ON play_log(user_id);").execute(pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_play_log_track ON play_log(track_id);").execute(pool).await?;
 
+    // Create settings table for persistence of server configurations (e.g. tunnel config)
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );"
+    ).execute(pool).await?;
+
     // Prune events older than 24 hours on startup
     if let Err(e) = sqlx::query("DELETE FROM events WHERE datetime(created_at) < datetime('now', '-24 hours')")
         .execute(pool)

@@ -19,6 +19,7 @@ A lightweight, self-hosted audio streaming server written in Rust with a modern,
 *   **Synced Lyrics Retrieval**: Integrates with [LRCLIB](https://lrclib.net/) to automatically retrieve synchronized and plain text lyrics when they are not present in local tags.
 *   **Real-Time Client Sync**: Uses Server-Sent Events (SSE) to broadcast library updates (e.g. `track.added`, `track.deleted`) to keep client interfaces synchronized.
 *   **Secure Authentication**: JWT-based authentication system with auto-bootstrapping for the administrator user.
+*   **Subsonic Client Support**: Exposes a standard Subsonic-compliant API (under `/rest/`) for compatibility with external music streaming applications on Android, iOS, and Desktop.
 
 ---
 
@@ -190,6 +191,23 @@ audion-server/
 ├── docker-compose.yml    # Combined stack setup
 └── Cargo.toml            # Rust dependency manifest
 ```
+
+## 📻 Subsonic Client Integration
+
+Audion Server includes a built-in Subsonic-compatible API, allowing you to connect and stream your music library to any Subsonic-compatible client app. 
+
+### Recommended Clients
+*   **Android:** Symfonium, DSub, Substreamer, UltraSonic
+*   **iOS:** play:Sub, Substreamer, Amuse, AVSub
+*   **Desktop/Web:** Feishin, Sonixd, Sublime Music
+
+### Connection Details
+To connect a Subsonic client to your Audion Server, configure the following connection parameters:
+1.  **Server URL**: `http://<your-server-ip>:<port>` (e.g., `http://localhost:8080`). Do not append `/rest/` as clients append this automatically.
+2.  **Username**: Your Audion username.
+3.  **Password**: Your Audion password.
+
+The server supports standard plain-text password authentication as well as secure salt/token-based MD5 authentication out of the box.
 
 ---
 

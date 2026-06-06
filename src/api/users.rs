@@ -132,6 +132,13 @@ pub async fn update_user(
         require_admin(&claims).map_err(|(s, m)| (s, m.to_string()))?;
     }
 
+    // Standard users are only allowed to update their listenbrainz_token
+    if claims.role != "Admin" {
+        if payload.username.is_some() || payload.password.is_some() || payload.role.is_some() || payload.is_enabled.is_some() {
+            return Err((StatusCode::FORBIDDEN, "Non-administrator users cannot update protected fields (username, password, role, or active status) here".to_string()));
+        }
+    }
+
     // Get current user details
     let mut current_user = sqlx::query_as::<_, UserInfo>(
         "SELECT id, username, role, listenbrainz_token, is_enabled, created_at FROM users WHERE id = ?"

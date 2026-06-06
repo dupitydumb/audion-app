@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Eye, EyeOff, Copy, Check, Terminal, Code2 } from '@lucide/svelte';
+  import { Eye, EyeOff, Copy, Check, Terminal, Code2, Radio } from '@lucide/svelte';
 
   let { token, addToast } = $props<{
     token: string;
@@ -101,6 +101,36 @@
     <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.5rem; line-height: 1.4;">
       This JSON Web Token (JWT) allows passwordless, secure sync authentication. Keep it private. It is automatically valid for 30 days.
     </p>
+  </div>
+
+  <div class="glass-card">
+    <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;">
+      <Radio size={20} style="color: var(--accent);" />
+      <h3 style="font-family: var(--font-heading); font-size: 1.2rem; font-weight: 600; margin: 0;">Subsonic Client Integration</h3>
+    </div>
+    <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 1.25rem;">
+      Audion Server exposes a standard Subsonic-compliant API at the root level, making it compatible with a wide range of external music streaming clients.
+    </p>
+    
+    <div style="display: grid; grid-template-columns: 120px 1fr; gap: 0.75rem; font-size: 0.9rem; align-items: center; background: rgba(0,0,0,0.15); padding: 1rem; border-radius: 6px; border: 1px solid var(--border-color); font-family: var(--font-mono, monospace);">
+      <span style="color: var(--text-secondary); font-weight: 600;">Server URL:</span>
+      <span style="color: var(--text-primary); word-break: break-all;">{serverUrl}</span>
+      
+      <span style="color: var(--text-secondary); font-weight: 600;">Username:</span>
+      <span style="color: var(--text-primary);">Your account username</span>
+
+      <span style="color: var(--text-secondary); font-weight: 600;">Password:</span>
+      <span style="color: var(--text-primary);">Your account password</span>
+    </div>
+
+    <div style="margin-top: 1.25rem; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">
+      <h4 style="font-weight: 600; color: var(--text-primary); margin-bottom: 0.5rem;">Supported Mobile & Desktop Clients:</h4>
+      <ul style="margin: 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.25rem;">
+        <li><strong>Android:</strong> Symfonium, DSub, Substreamer, Audinaut, UltraSonic</li>
+        <li><strong>iOS:</strong> play:Sub, Substreamer, Amuse, AVSub</li>
+        <li><strong>Desktop/Web:</strong> Feishin, Sonixd, Sublime Music</li>
+      </ul>
+    </div>
   </div>
 
   <div class="glass-card">

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use crate::config::Config;
 use crate::events::EventBus;
+use crate::tunnel::TunnelManager;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanStatus {
@@ -29,10 +30,11 @@ pub struct AppState {
     pub has_ffmpeg: bool,
     pub scan_status: Arc<Mutex<ScanStatus>>,
     pub fetcher_status: Arc<Mutex<FetcherStatus>>,
+    pub tunnel_manager: Arc<tokio::sync::Mutex<TunnelManager>>,
 }
 
 impl AppState {
-    pub fn new(pool: SqlitePool, config: Config, event_bus: EventBus) -> Self {
+    pub async fn new(pool: SqlitePool, config: Config, event_bus: EventBus) -> Self {
         let has_ffmpeg = std::process::Command::new("ffmpeg")
             .arg("-version")
             .stdout(std::process::Stdio::null())
@@ -62,6 +64,8 @@ impl AppState {
             logs: Vec::new(),
         }));
 
+        let tunnel_manager = Arc::new(tokio::sync::Mutex::new(TunnelManager::new(pool.clone(), config.port).await));
+
         Self {
             pool,
             config,
@@ -69,6 +73,7 @@ impl AppState {
             has_ffmpeg,
             scan_status,
             fetcher_status,
+            tunnel_manager,
         }
     }
 }

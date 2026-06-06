@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Laptop, Settings, Link, ShieldCheck, Check, Copy } from '@lucide/svelte';
+  import { Laptop, Settings, Link, ShieldCheck, Check, Copy, Radio } from '@lucide/svelte';
 
   let { addToast } = $props<{
     addToast: (message: string, type: 'success' | 'error' | 'info') => void;
@@ -79,6 +79,31 @@
         <ShieldCheck size={24} style="color: var(--accent); opacity: 0.7;" />
       </div>
     </div>
+  </div>
+
+  <div class="glass-card">
+    <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;">
+      <Radio size={22} style="color: var(--accent);" />
+      <h3 style="font-family: var(--font-heading); font-size: 1.2rem; font-weight: 600; margin: 0;">Connecting Subsonic Clients</h3>
+    </div>
+    <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 1rem;">
+      Audion Server comes with a built-in Subsonic-compatible API. This allows you to stream your music library using popular third-party Subsonic clients like <strong>Symfonium</strong>, <strong>DSub</strong>, <strong>Substreamer</strong>, <strong>Amuse</strong>, or <strong>play:Sub</strong> on mobile and other devices.
+    </p>
+    <div style="display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.9rem; line-height: 1.5; background: rgba(255,255,255,0.02); padding: 1rem; border-radius: 6px; border: 1px solid var(--border-color);">
+      <div>
+        <strong>Server URL / Address:</strong> <code style="background: rgba(0,0,0,0.3); padding: 0.1rem 0.3rem;">{serverUrl}</code>
+      </div>
+      <div>
+        <strong>Username:</strong> Your Audion account username
+      </div>
+      <div>
+        <strong>Password:</strong> Your Audion account password
+      </div>
+    </div>
+    <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.75rem; line-height: 1.4; display: flex; gap: 0.25rem; align-items: flex-start;">
+      <span>💡</span>
+      <span><em>Standard Subsonic client apps will automatically append <code style="background: rgba(0,0,0,0.3); padding: 0.1rem 0.3rem;">/rest/...</code> to the URL you provide, so enter the base address exactly as shown above. Both password and MD5 token-based authentication are supported.</em></span>
+    </p>
   </div>
 
   <div class="glass-card">

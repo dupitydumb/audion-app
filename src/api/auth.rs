@@ -130,6 +130,20 @@ pub async fn update_profile(
         return Err((StatusCode::UNAUTHORIZED, "Incorrect current password".to_string()));
     }
 
+    // Restrict StreamOnly accounts from modifying their username or password
+    if user.role == "StreamOnly" {
+        if let Some(ref new_u) = payload.new_username {
+            if !new_u.trim().is_empty() && new_u.trim() != user.username {
+                return Err((StatusCode::FORBIDDEN, "StreamOnly users cannot change their username".to_string()));
+            }
+        }
+        if let Some(ref new_p) = payload.new_password {
+            if !new_p.trim().is_empty() {
+                return Err((StatusCode::FORBIDDEN, "StreamOnly users cannot change their password".to_string()));
+            }
+        }
+    }
+
     // Determine new username and password hash
     let updated_username = match payload.new_username {
         Some(ref u) if !u.trim().is_empty() => {
