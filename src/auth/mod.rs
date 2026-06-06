@@ -6,10 +6,11 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: String,      // user_id
     pub username: String,
+    pub role: String,     // Admin, User, StreamOnly
     pub exp: usize,       // Expiration time (UNIX timestamp)
 }
 
@@ -30,7 +31,7 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
-pub fn generate_token(user_id: &str, username: &str, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
+pub fn generate_token(user_id: &str, username: &str, role: &str, secret: &str) -> Result<String, jsonwebtoken::errors::Error> {
     let expiration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -40,6 +41,7 @@ pub fn generate_token(user_id: &str, username: &str, secret: &str) -> Result<Str
     let claims = Claims {
         sub: user_id.to_string(),
         username: username.to_string(),
+        role: role.to_string(),
         exp: expiration as usize,
     };
 

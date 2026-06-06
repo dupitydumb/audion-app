@@ -26,7 +26,12 @@
     Shuffle,
     SkipBack,
     SkipForward,
-    Repeat
+    Repeat,
+    ArrowUp,
+    ArrowDown,
+    Trash2,
+    Pencil,
+    MoreVertical
   } from '@lucide/svelte';
 
   // Import components
@@ -47,11 +52,86 @@
   // Authentication State
   let token = $state(localStorage.getItem('audion_admin_token') || '');
   let username = $state(localStorage.getItem('audion_admin_username') || '');
+  let role = $state(localStorage.getItem('audion_admin_role') || 'User');
+  let listenbrainzToken = $state(localStorage.getItem('audion_admin_lb_token') || '');
   let isLoggedIn = $derived(!!token);
 
   // Layout State
   let activeTab = $state('dashboard');
   let sidebarOpen = $state(false);
+  let isMobile = $state(false);
+  let activeFsTab = $state<'artwork' | 'lyrics'>('artwork');
+
+  // Global Action Sheet State
+  interface ActionSheetTrack {
+    id: number;
+    title: string;
+    artist: string;
+    album?: string | null;
+    format?: string | null;
+    bitrate?: number | null;
+    genre?: string | null;
+    duration?: number | null;
+  }
+  interface ActionSheetCallbacks {
+    onDelete?: () => void;
+    onEdit?: () => void;
+    onRemoveFromPlaylist?: () => void;
+    onMoveUp?: () => void;
+    onMoveDown?: () => void;
+  }
+  let actionSheetTrack = $state<ActionSheetTrack | null>(null);
+  let actionSheetType = $state<'library' | 'liked' | 'playlist' | 'artist' | 'album'>('library');
+  let actionSheetCallbacks = $state<ActionSheetCallbacks>({});
+  let showActionSheet = $state(false);
+  let playlists = $state<any[]>([]);
+
+  function openActionSheet(track: ActionSheetTrack, type: 'library' | 'liked' | 'playlist' | 'artist' | 'album' = 'library', callbacks: ActionSheetCallbacks = {}) {
+    actionSheetTrack = track;
+    actionSheetType = type;
+    actionSheetCallbacks = callbacks;
+    showActionSheet = true;
+    fetchPlaylistsForSheet();
+  }
+
+  function closeActionSheet() {
+    showActionSheet = false;
+    actionSheetTrack = null;
+    actionSheetCallbacks = {};
+  }
+
+  async function fetchPlaylistsForSheet() {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/playlists', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        playlists = await res.json();
+      }
+    } catch (e) {}
+  }
+
+  async function addTrackToPlaylistGlobal(trackId: number, playlistId: number) {
+    try {
+      const res = await fetch(`/api/playlists/${playlistId}/tracks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ track_id: trackId })
+      });
+      if (res.ok || res.status === 201) {
+        addToast('Track added to playlist', 'success');
+      } else {
+        addToast('Failed to add track to playlist', 'error');
+      }
+    } catch (e) {
+      addToast('Failed to add track to playlist', 'error');
+    }
+    closeActionSheet();
+  }
 
   // Toast Notifications
   interface Toast {
@@ -77,11 +157,22 @@
       : 0
   );
 
+  onMount(() => {
+    // Detect mobile view on mount and window resize
+    const mql = window.matchMedia('(max-width: 768px)');
+    isMobile = mql.matches;
+    const listener = (e: MediaQueryListEvent) => {
+      isMobile = e.matches;
+    };
+    mql.addEventListener('change', listener);
+    return () => mql.removeEventListener('change', listener);
+  });
+
   $effect(() => {
     if (typeof document !== 'undefined') {
       document.documentElement.style.setProperty(
         '--player-height',
-        playingTrack ? '96px' : '0px'
+        playingTrack ? (isMobile ? '80px' : '96px') : '0px'
       );
     }
   });
@@ -438,26 +529,38 @@
     }
   });
 
-  function handleLoginSuccess(newToken: string, newUsername: string) {
+  function handleLoginSuccess(newToken: string, newUsername: string, newRole: string, newLbToken: string) {
     token = newToken;
     username = newUsername;
+    role = newRole;
+    listenbrainzToken = newLbToken;
     localStorage.setItem('audion_admin_token', newToken);
     localStorage.setItem('audion_admin_username', newUsername);
+    localStorage.setItem('audion_admin_role', newRole);
+    localStorage.setItem('audion_admin_lb_token', newLbToken);
     activeTab = 'dashboard';
   }
 
-  function handleProfileUpdate(newToken: string, newUsername: string) {
+  function handleProfileUpdate(newToken: string, newUsername: string, newRole: string, newLbToken: string) {
     token = newToken;
     username = newUsername;
+    role = newRole;
+    listenbrainzToken = newLbToken;
     localStorage.setItem('audion_admin_token', newToken);
     localStorage.setItem('audion_admin_username', newUsername);
+    localStorage.setItem('audion_admin_role', newRole);
+    localStorage.setItem('audion_admin_lb_token', newLbToken);
   }
 
   function handleLogout() {
     token = '';
     username = '';
+    role = 'User';
+    listenbrainzToken = '';
     localStorage.removeItem('audion_admin_token');
     localStorage.removeItem('audion_admin_username');
+    localStorage.removeItem('audion_admin_role');
+    localStorage.removeItem('audion_admin_lb_token');
     if (audioRef) {
       audioRef.pause();
     }
@@ -867,6 +970,8 @@
           onPlayTrack={handlePlayTrack} 
           onToggleLike={toggleLike}
           {addToast} 
+          {isMobile}
+          {openActionSheet}
         />
       {:else if activeTab === 'albums'}
         <Albums 
@@ -877,6 +982,8 @@
           onPlayTrack={handlePlayTrack} 
           onToggleLike={toggleLike}
           {addToast} 
+          {isMobile}
+          {openActionSheet}
         />
       {:else if activeTab === 'artists'}
         <Artists 
@@ -887,6 +994,8 @@
           onPlayTrack={handlePlayTrack} 
           onToggleLike={toggleLike}
           {addToast} 
+          {isMobile}
+          {openActionSheet}
         />
       {:else if activeTab === 'playlists'}
         <Playlists 
@@ -895,6 +1004,8 @@
           {isPlaying}
           onPlayTrack={handlePlayTrack} 
           {addToast} 
+          {isMobile}
+          {openActionSheet}
         />
       {:else if activeTab === 'liked'}
         <Liked 
@@ -905,6 +1016,8 @@
           onPlayTrack={handlePlayTrack} 
           onToggleLike={toggleLike}
           {addToast} 
+          {isMobile}
+          {openActionSheet}
         />
       {:else if activeTab === 'connection'}
         <Connection {token} {addToast} />
@@ -914,6 +1027,8 @@
         <Settings 
           {token} 
           {username} 
+          {role}
+          {listenbrainzToken}
           {scanStatus} 
           {fetcherStatus} 
           onLogout={handleLogout} 
@@ -923,9 +1038,9 @@
       {/if}
     </main>
 
-        <!-- Transcoding Status Bar -->
+    <!-- Transcoding Status Bar -->
     {#if isTranscoding && playingTrack}
-      <div class="transcoding-bar" in:slide={{ y: 20, duration: 300 }}>
+      <div class="transcoding-bar" in:slide={{ duration: 300 }}>
         <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite;" />
         <span>Converting FLAC to MP3 for streaming...</span>
         <span class="transcoding-track">{playingTrack.title}</span>
@@ -935,161 +1050,215 @@
 
     <!-- Global Audio Player for preview -->
     {#if playingTrack}
-      <div class="mini-player">
-        <div class="mini-player-info">
-          <div class="mini-player-cover">
-            {#if !coverFailed}
-              <img 
-                src="/api/tracks/{playingTrack.id}/cover?token={token}" 
-                alt={playingTrack.title}
-                onerror={() => coverFailed = true}
-              />
-            {:else}
-              <Music size={18} style="color: var(--text-secondary);" />
-            {/if}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="mini-player" onclick={() => { if (isMobile) isFullScreen = true; }}>
+        {#if isMobile}
+          <!-- Thin progress bar at the very top of mini-player on mobile -->
+          <div class="mini-player-top-progress">
+            <div class="mini-player-top-progress-fill" style="width: {duration > 0 ? (currentTime / duration) * 100 : 0}%"></div>
           </div>
-          <div class="mini-player-text">
-            <div class="mini-player-title">{playingTrack.title}</div>
-            <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: var(--text-secondary);">
-              <span>{playingTrack.artist}</span>
-              {#if playingTrack.format}
-                <span style="font-size: 0.65rem; text-transform: uppercase; background: rgba(255,255,255,0.06); padding: 0.1rem 0.35rem; border-radius: 4px; border: 1px solid var(--border-color); color: var(--text-secondary); margin-left: 0.25rem; font-weight: 600; font-family: monospace;">
-                  {playingTrack.format}
-                  {#if playingTrack.bitrate}
-                    · {Math.round(playingTrack.bitrate / 1000)}k
-                  {/if}
-                </span>
-              {/if}
-              {#if playingTrack.genre}
-                <span class="genre-tag" style="margin-left: 0.25rem;">{playingTrack.genre}</span>
-              {/if}
-              {#if isTranscoding}
-                <span class="converting-badge" style="font-size: 0.65rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 0.1rem 0.35rem; border-radius: 4px; color: rgb(216, 180, 254); font-weight: 600; display: inline-flex; align-items: center; gap: 0.25rem;">
-                  <RefreshCw size={8} class="animate-spin" style="animation: spin 1s linear infinite;" /> Converting (FFmpeg)
-                </span>
-              {/if}
+          
+          <div class="mini-player-mobile-container">
+            <div class="mini-player-info" style="display: flex; align-items: center; gap: 0.75rem; width: 70%; flex: 1;">
+              <div class="mini-player-cover">
+                {#if !coverFailed}
+                  <img 
+                    src="/api/tracks/{playingTrack.id}/cover?token={token}" 
+                    alt={playingTrack.title}
+                    onerror={() => coverFailed = true}
+                  />
+                {:else}
+                  <Music size={18} style="color: var(--text-secondary);" />
+                {/if}
+              </div>
+              <div class="mini-player-text" style="min-width: 0; flex: 1;">
+                <div class="mini-player-title" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{playingTrack.title}</div>
+                <div style="font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{playingTrack.artist}</div>
+              </div>
+            </div>
+            
+            <div class="mini-player-mobile-controls" onclick={(e) => e.stopPropagation()}>
+              <button 
+                onclick={togglePlay} 
+                class="btn" 
+                style="background: transparent; border: none; color: var(--text-primary); padding: 0.5rem; display: flex; align-items: center;"
+              >
+                {#if isBuffering}
+                  <RefreshCw size={18} class="animate-spin" style="animation: spin 1s linear infinite;" />
+                {:else if isPlaying}
+                  <Pause size={18} fill="currentColor" />
+                {:else}
+                  <Play size={18} fill="currentColor" style="margin-left: 2px;" />
+                {/if}
+              </button>
+              
+              <button 
+                onclick={skipForward} 
+                class="btn" 
+                style="background: transparent; border: none; color: var(--text-primary); padding: 0.5rem; display: flex; align-items: center;"
+              >
+                <SkipForward size={18} fill="currentColor" />
+              </button>
             </div>
           </div>
-          <button 
-            onclick={() => playingTrack && toggleLike(playingTrack.id)} 
-            class="btn" 
-            style="background: transparent; border: none; padding: 0.25rem; color: {likedTrackIds.includes(playingTrack.id) ? 'var(--danger)' : 'var(--text-muted)'}; margin-left: 0.5rem;"
-            title={likedTrackIds.includes(playingTrack.id) ? 'Unlike track' : 'Like track'}
-          >
-            <Heart size={16} fill={likedTrackIds.includes(playingTrack.id) ? 'currentColor' : 'none'} />
-          </button>
-        </div>
-
-        <div class="mini-player-controls">
-          <div class="controls-row" style="display: flex; align-items: center; gap: 0.75rem; justify-content: center;">
-            <button 
-              onclick={() => isShuffle = !isShuffle} 
-              class="btn" 
-              style="background: transparent; border: none; color: {isShuffle ? 'var(--accent)' : 'var(--text-secondary)'}; padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
-              title="Shuffle: {isShuffle ? 'On' : 'Off'}"
-            >
-              <Shuffle size={14} />
-            </button>
-
-            <button 
-              onclick={skipBackward} 
-              class="btn" 
-              style="background: transparent; border: none; color: var(--text-primary); padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
-              title="Previous"
-            >
-              <SkipBack size={14} fill="currentColor" />
-            </button>
-
-            <button 
-              onclick={togglePlay} 
-              class="btn-play-pause"
-              title={isPlaying ? "Pause" : "Play"}
-            >
-              {#if isBuffering}
-                <RefreshCw size={18} class="animate-spin" style="animation: spin 1s linear infinite;" />
-              {:else if isPlaying}
-                <Pause size={18} fill="currentColor" />
+        {:else}
+          <!-- Desktop mini player layout -->
+          <div class="mini-player-info">
+            <div class="mini-player-cover">
+              {#if !coverFailed}
+                <img 
+                  src="/api/tracks/{playingTrack.id}/cover?token={token}" 
+                  alt={playingTrack.title}
+                  onerror={() => coverFailed = true}
+                />
               {:else}
-                <Play size={18} fill="currentColor" style="margin-left: 2px;" />
+                <Music size={18} style="color: var(--text-secondary);" />
               {/if}
-            </button>
-
-            <button 
-              onclick={skipForward} 
-              class="btn" 
-              style="background: transparent; border: none; color: var(--text-primary); padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
-              title="Next"
-            >
-              <SkipForward size={14} fill="currentColor" />
-            </button>
-
-            <button 
-              onclick={() => {
-                if (repeatMode === 'off') repeatMode = 'all';
-                else if (repeatMode === 'all') repeatMode = 'one';
-                else repeatMode = 'off';
-              }} 
-              class="btn" 
-              style="background: transparent; border: none; color: {repeatMode !== 'off' ? 'var(--accent)' : 'var(--text-secondary)'}; padding: 0.25rem; display: flex; align-items: center; position: relative; cursor: pointer;"
-              title="Repeat: {repeatMode}"
-            >
-              <Repeat size={14} />
-              {#if repeatMode === 'one'}
-                <span style="position: absolute; font-size: 7px; font-weight: bold; background: var(--accent); color: #000000; border-radius: 50%; width: 9px; height: 9px; display: flex; align-items: center; justify-content: center; bottom: -2px; right: -2px;">1</span>
-              {/if}
-            </button>
-          </div>
-
-          <div class="player-progress-container">
-            <span class="player-progress-time">{formatTime(currentTime)}</span>
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="player-progress-bar" onclick={handleProgressClick}>
-              <div 
-                class="player-progress-fill" 
-                style="width: {duration > 0 ? (currentTime / duration) * 100 : 0}%"
-              ></div>
             </div>
-            <span class="player-progress-time">{formatTime(duration)}</span>
+            <div class="mini-player-text">
+              <div class="mini-player-title">{playingTrack.title}</div>
+              <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: var(--text-secondary);">
+                <span>{playingTrack.artist}</span>
+                {#if playingTrack.format}
+                  <span style="font-size: 0.65rem; text-transform: uppercase; background: rgba(255,255,255,0.06); padding: 0.1rem 0.35rem; border-radius: 4px; border: 1px solid var(--border-color); color: var(--text-secondary); margin-left: 0.25rem; font-weight: 600; font-family: monospace;">
+                    {playingTrack.format}
+                    {#if playingTrack.bitrate}
+                      · {Math.round(playingTrack.bitrate / 1000)}k
+                    {/if}
+                  </span>
+                {/if}
+                {#if playingTrack.genre}
+                  <span class="genre-tag" style="margin-left: 0.25rem;">{playingTrack.genre}</span>
+                {/if}
+                {#if isTranscoding}
+                  <span class="converting-badge" style="font-size: 0.65rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 0.1rem 0.35rem; border-radius: 4px; color: rgb(216, 180, 254); font-weight: 600; display: inline-flex; align-items: center; gap: 0.25rem;">
+                    <RefreshCw size={8} class="animate-spin" style="animation: spin 1s linear infinite;" /> Converting (FFmpeg)
+                  </span>
+                {/if}
+              </div>
+            </div>
+            <button 
+              onclick={() => playingTrack && toggleLike(playingTrack.id)} 
+              class="btn" 
+              style="background: transparent; border: none; padding: 0.25rem; color: {likedTrackIds.includes(playingTrack.id) ? 'var(--danger)' : 'var(--text-muted)'}; margin-left: 0.5rem;"
+              title={likedTrackIds.includes(playingTrack.id) ? 'Unlike track' : 'Like track'}
+            >
+              <Heart size={16} fill={likedTrackIds.includes(playingTrack.id) ? 'currentColor' : 'none'} />
+            </button>
           </div>
-        </div>
 
-        <div class="mini-player-volume">
-          <button 
-            onclick={() => showLyricsPanel = !showLyricsPanel} 
-            class="btn" 
-            style="background: transparent; border: none; color: {showLyricsPanel ? '#ffffff' : 'var(--text-secondary)'}; padding: 0.25rem; margin-right: 0.5rem; display: flex; align-items: center;"
-            title="Toggle lyrics panel"
-          >
-            <AlignLeft size={16} />
-          </button>
+          <div class="mini-player-controls">
+            <div class="controls-row" style="display: flex; align-items: center; gap: 0.75rem; justify-content: center;">
+              <button 
+                onclick={() => isShuffle = !isShuffle} 
+                class="btn" 
+                style="background: transparent; border: none; color: {isShuffle ? 'var(--accent)' : 'var(--text-secondary)'}; padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
+                title="Shuffle: {isShuffle ? 'On' : 'Off'}"
+              >
+                <Shuffle size={14} />
+              </button>
 
-          <button 
-            onclick={() => isFullScreen = true} 
-            class="btn" 
-            style="background: transparent; border: none; color: var(--text-secondary); padding: 0.25rem; margin-right: 0.75rem; display: flex; align-items: center;"
-            title="Enter fullscreen"
-          >
-            <Maximize2 size={16} />
-          </button>
+              <button 
+                onclick={skipBackward} 
+                class="btn" 
+                style="background: transparent; border: none; color: var(--text-primary); padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
+                title="Previous"
+              >
+                <SkipBack size={14} fill="currentColor" />
+              </button>
 
-          <button onclick={toggleMute} class="btn" style="background: transparent; border: none; color: var(--text-secondary); padding: 0.25rem;">
-            {#if isMuted}
-              <VolumeX size={16} />
-            {:else}
-              <Volume2 size={16} />
-            {/if}
-          </button>
-          <input 
-            type="range" 
-            min="0" 
-            max="1" 
-            step="0.01" 
-            value={volume} 
-            oninput={handleVolumeChange} 
-            class="volume-slider" 
-          />
-        </div>
+              <button 
+                onclick={togglePlay} 
+                class="btn-play-pause"
+                title={isPlaying ? "Pause" : "Play"}
+              >
+                {#if isBuffering}
+                  <RefreshCw size={18} class="animate-spin" style="animation: spin 1s linear infinite;" />
+                {:else if isPlaying}
+                  <Pause size={18} fill="currentColor" />
+                {:else}
+                  <Play size={18} fill="currentColor" style="margin-left: 2px;" />
+                {/if}
+              </button>
+
+              <button 
+                onclick={skipForward} 
+                class="btn" 
+                style="background: transparent; border: none; color: var(--text-primary); padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
+                title="Next"
+              >
+                <SkipForward size={14} fill="currentColor" />
+              </button>
+
+              <button 
+                onclick={() => {
+                  if (repeatMode === 'off') repeatMode = 'all';
+                  else if (repeatMode === 'all') repeatMode = 'one';
+                  else repeatMode = 'off';
+                }} 
+                class="btn" 
+                style="background: transparent; border: none; color: {repeatMode !== 'off' ? 'var(--accent)' : 'var(--text-secondary)'}; padding: 0.25rem; display: flex; align-items: center; position: relative; cursor: pointer;"
+                title="Repeat: {repeatMode}"
+              >
+                <Repeat size={14} />
+                {#if repeatMode === 'one'}
+                  <span style="position: absolute; font-size: 7px; font-weight: bold; background: var(--accent); color: #000000; border-radius: 50%; width: 9px; height: 9px; display: flex; align-items: center; justify-content: center; bottom: -2px; right: -2px;">1</span>
+                {/if}
+              </button>
+            </div>
+
+            <div class="player-progress-container">
+              <span class="player-progress-time">{formatTime(currentTime)}</span>
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="player-progress-bar" onclick={handleProgressClick}>
+                <div 
+                  class="player-progress-fill" 
+                  style="width: {duration > 0 ? (currentTime / duration) * 100 : 0}%"
+                ></div>
+              </div>
+              <span class="player-progress-time">{formatTime(duration)}</span>
+            </div>
+          </div>
+
+          <div class="mini-player-volume">
+            <button 
+              onclick={() => showLyricsPanel = !showLyricsPanel} 
+              class="btn" 
+              style="background: transparent; border: none; color: {showLyricsPanel ? '#ffffff' : 'var(--text-secondary)'}; padding: 0.25rem; margin-right: 0.5rem; display: flex; align-items: center;"
+              title="Toggle lyrics panel"
+            >
+              <AlignLeft size={16} />
+            </button>
+
+            <button 
+              onclick={() => isFullScreen = true} 
+              class="btn" 
+              style="background: transparent; border: none; color: var(--text-secondary); padding: 0.25rem; margin-right: 0.75rem; display: flex; align-items: center;"
+              title="Enter fullscreen"
+            >
+              <Maximize2 size={16} />
+            </button>
+
+            <button onclick={toggleMute} class="btn" style="background: transparent; border: none; color: var(--text-secondary); padding: 0.25rem;">
+              {#if isMuted}
+                <VolumeX size={16} />
+              {:else}
+                <Volume2 size={16} />
+              {/if}
+            </button>
+            <input 
+              type="range" 
+              min="0" 
+              max="1" 
+              step="0.01" 
+              value={volume} 
+              oninput={handleVolumeChange} 
+              class="volume-slider" 
+            />
+          </div>
+        {/if}
 
         <audio 
           bind:this={audioRef}
@@ -1106,6 +1275,7 @@
         ></audio>
       </div>
     {/if}
+
 
     <!-- Lyrics Sidebar -->
     {#if showLyricsPanel && playingTrack}
@@ -1147,6 +1317,52 @@
         </div>
       </aside>
     {/if}
+
+    <!-- Mobile Bottom Navigation -->
+    {#if isMobile}
+      <nav class="mobile-bottom-nav">
+        <button 
+          onclick={() => activeTab = 'dashboard'} 
+          class="mobile-nav-item"
+          class:active={activeTab === 'dashboard'}
+        >
+          <LayoutDashboard size={20} />
+          <span>Home</span>
+        </button>
+        <button 
+          onclick={() => activeTab = 'library'} 
+          class="mobile-nav-item"
+          class:active={activeTab === 'library' || activeTab === 'albums' || activeTab === 'artists'}
+        >
+          <LibraryIcon size={20} />
+          <span>Library</span>
+        </button>
+        <button 
+          onclick={() => activeTab = 'playlists'} 
+          class="mobile-nav-item"
+          class:active={activeTab === 'playlists'}
+        >
+          <ListMusic size={20} />
+          <span>Playlists</span>
+        </button>
+        <button 
+          onclick={() => activeTab = 'liked'} 
+          class="mobile-nav-item"
+          class:active={activeTab === 'liked'}
+        >
+          <Heart size={20} fill={activeTab === 'liked' ? 'currentColor' : 'none'} style="color: {activeTab === 'liked' ? 'var(--danger)' : 'inherit'};" />
+          <span>Liked</span>
+        </button>
+        <button 
+          onclick={() => activeTab = 'settings'} 
+          class="mobile-nav-item"
+          class:active={activeTab === 'settings'}
+        >
+          <SettingsIcon size={20} />
+          <span>Settings</span>
+        </button>
+      </nav>
+    {/if}
   </div>
 {/if}
 
@@ -1169,8 +1385,25 @@
       <Minimize2 size={20} />
     </button>
 
+    <div class="fullscreen-tabs-header hide-desktop">
+      <button 
+        class="fullscreen-tab-btn" 
+        class:active={activeFsTab === 'artwork'} 
+        onclick={() => activeFsTab = 'artwork'}
+      >
+        Artwork
+      </button>
+      <button 
+        class="fullscreen-tab-btn" 
+        class:active={activeFsTab === 'lyrics'} 
+        onclick={() => activeFsTab = 'lyrics'}
+      >
+        Lyrics
+      </button>
+    </div>
+
     <div class="fullscreen-content">
-      <div class="fullscreen-left">
+      <div class="fullscreen-left" class:active-tab={activeFsTab === 'artwork' || !isMobile}>
         <div class="fullscreen-cover">
           {#if !coverFailed}
             <img 
@@ -1187,12 +1420,12 @@
 
         <div class="fullscreen-meta">
           <div class="fullscreen-title">{playingTrack.title}</div>
-          <div style="display: flex; align-items: center; gap: 0.75rem; justify-content: center; margin-top: 0.25rem;">
+          <div class="fullscreen-artist-row">
             <div class="fullscreen-artist" style="margin: 0;">{playingTrack.artist}</div>
             {#if playingTrack.genre}
               <span class="genre-tag" style="background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.15); color: rgba(255, 255, 255, 0.85);">{playingTrack.genre}</span>
             {/if}
-                        {#if isTranscoding}
+            {#if isTranscoding}
               <div class="fullscreen-transcoding">
                 <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite;" />
                 <span>Converting FLAC to MP3 via FFmpeg...</span>
@@ -1302,7 +1535,7 @@
         </div>
       </div>
 
-      <div class="fullscreen-right">
+      <div class="fullscreen-right" class:active-tab={activeFsTab === 'lyrics' || !isMobile}>
         <div class="fullscreen-lyrics-container" bind:this={fsLyricsContainerRef}>
           {#if lyricsLoading}
             <div class="lyrics-empty">
@@ -1328,11 +1561,169 @@
             </div>
           {/if}
         </div>
+        
+        {#if isMobile}
+          <div class="mobile-fs-lyrics-controls hide-desktop">
+            <button 
+              onclick={skipBackward} 
+              class="fullscreen-btn"
+              style="color: rgba(255,255,255,0.7); background: transparent; border: none; padding: 0.5rem;"
+            >
+              <SkipBack size={18} fill="currentColor" />
+            </button>
+            <button 
+              onclick={togglePlay} 
+              class="fullscreen-btn-play"
+              style="width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: #ffffff; color: #000000;"
+            >
+              {#if isBuffering}
+                <RefreshCw size={16} class="animate-spin" style="animation: spin 1s linear infinite;" />
+              {:else if isPlaying}
+                <Pause size={16} fill="currentColor" />
+              {:else}
+                <Play size={16} fill="currentColor" style="margin-left: 2px;" />
+              {/if}
+            </button>
+            <button 
+              onclick={skipForward} 
+              class="fullscreen-btn"
+              style="color: rgba(255,255,255,0.7); background: transparent; border: none; padding: 0.5rem;"
+            >
+              <SkipForward size={18} fill="currentColor" />
+            </button>
+          </div>
+        {/if}
       </div>
     </div>
   </div>
 {/if}
 
+<!-- Bottom Action Sheet Modal -->
+{#if showActionSheet && actionSheetTrack}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="bottom-sheet-backdrop" onclick={closeActionSheet}>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="bottom-sheet" onclick={(e) => e.stopPropagation()}>
+      <div class="bottom-sheet-handle"></div>
+      <div class="bottom-sheet-header">
+        <div class="bottom-sheet-artwork">
+          <img 
+            src="/api/tracks/{actionSheetTrack.id}/cover?token={token}" 
+            alt=""
+            onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+          />
+          <Music size={18} style="color: var(--text-muted);" />
+        </div>
+        <div class="bottom-sheet-title-info">
+          <div class="bottom-sheet-title">{actionSheetTrack.title}</div>
+          <div class="bottom-sheet-artist">{actionSheetTrack.artist}</div>
+        </div>
+        <button onclick={closeActionSheet} class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.75rem; border-radius: 99px;">
+          Done
+        </button>
+      </div>
+
+      <div class="bottom-sheet-options">
+        {#if playlists.length > 0}
+          <div style="margin-bottom: 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.04); padding-bottom: 0.5rem;">
+            <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.5rem; padding-left: 1rem; text-transform: uppercase; letter-spacing: 0.5px;">Add to Playlist</div>
+            <div style="display: flex; gap: 0.5rem; overflow-x: auto; padding: 0.25rem 0.5rem 0.5rem; scrollbar-width: none;">
+              {#each playlists as pl}
+                <button 
+                  onclick={() => { if (actionSheetTrack) { addTrackToPlaylistGlobal(actionSheetTrack.id, pl.id); } }}
+                  class="btn btn-secondary"
+                  style="padding: 0.4rem 0.85rem; font-size: 0.8rem; border-radius: 99px; white-space: nowrap; background: rgba(255,255,255,0.03);"
+                >
+                  {pl.name}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        <button 
+          onclick={() => { 
+            if (actionSheetTrack) {
+              toggleLike(actionSheetTrack.id);
+              closeActionSheet();
+            }
+          }} 
+          class="bottom-sheet-option"
+        >
+          <Heart size={16} fill={likedTrackIds.includes(actionSheetTrack.id) ? 'currentColor' : 'none'} style="color: {likedTrackIds.includes(actionSheetTrack.id) ? 'var(--danger)' : 'inherit'};" />
+          <span>{likedTrackIds.includes(actionSheetTrack.id) ? 'Remove from Liked' : 'Like Track'}</span>
+        </button>
+
+        {#if actionSheetCallbacks.onMoveUp}
+          <button 
+            onclick={() => { 
+              actionSheetCallbacks.onMoveUp?.();
+              closeActionSheet();
+            }} 
+            class="bottom-sheet-option"
+          >
+            <ArrowUp size={16} />
+            <span>Move Up in Playlist</span>
+          </button>
+        {/if}
+
+        {#if actionSheetCallbacks.onMoveDown}
+          <button 
+            onclick={() => { 
+              actionSheetCallbacks.onMoveDown?.();
+              closeActionSheet();
+            }} 
+            class="bottom-sheet-option"
+          >
+            <ArrowDown size={16} />
+            <span>Move Down in Playlist</span>
+          </button>
+        {/if}
+
+        {#if actionSheetCallbacks.onRemoveFromPlaylist}
+          <button 
+            onclick={() => { 
+              actionSheetCallbacks.onRemoveFromPlaylist?.();
+              closeActionSheet();
+            }} 
+            class="bottom-sheet-option danger"
+          >
+            <Trash2 size={16} />
+            <span>Remove from Playlist</span>
+          </button>
+        {/if}
+
+        {#if actionSheetCallbacks.onEdit}
+          <button 
+            onclick={() => { 
+              actionSheetCallbacks.onEdit?.();
+              closeActionSheet();
+            }} 
+            class="bottom-sheet-option"
+          >
+            <Pencil size={16} />
+            <span>Edit Metadata</span>
+          </button>
+        {/if}
+
+        {#if actionSheetCallbacks.onDelete}
+          <button 
+            onclick={() => { 
+              actionSheetCallbacks.onDelete?.();
+              closeActionSheet();
+            }} 
+            class="bottom-sheet-option danger"
+          >
+            <Trash2 size={16} />
+            <span>Delete Track</span>
+          </button>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
 
 <!-- Toast Notifications -->
 <div class="toast-container" role="status" aria-live="polite" aria-atomic="false">
@@ -1342,3 +1733,4 @@
     </div>
   {/each}
 </div>
+

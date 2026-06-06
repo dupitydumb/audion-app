@@ -399,7 +399,7 @@ pub async fn get_track_lyrics(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<LyricsResponse>, (StatusCode, String)> {
-    let row = sqlx::query("SELECT title, artist, duration, metadata_json FROM tracks WHERE id = ?")
+    let row = sqlx::query("SELECT title, artist, album, duration, metadata_json FROM tracks WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.pool)
         .await
@@ -408,11 +408,12 @@ pub async fn get_track_lyrics(
 
     let title: Option<String> = row.get("title");
     let artist: Option<String> = row.get("artist");
+    let album: Option<String> = row.get("album");
     let duration: Option<i32> = row.get("duration");
     let metadata_json: Option<String> = row.get("metadata_json");
 
-    let mut lyrics = metadata_json.and_then(|json_str| {
-        let val: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+    let mut lyrics = metadata_json.as_ref().and_then(|json_str| {
+        let val: serde_json::Value = serde_json::from_str(json_str).ok()?;
         val.get("Lyrics").and_then(|v| v.as_str().map(|s| s.to_string()))
     });
 
@@ -421,15 +422,29 @@ pub async fn get_track_lyrics(
             let clean_artist = clean_metadata_string(&artist);
             let clean_title = clean_metadata_string(&title);
 
-            let client = reqwest::Client::new();
-            let mut request = client.get("https://lrclib.net/api/get")
-                .query(&[("artist", &clean_artist), ("track_name", &clean_title)]);
+            let client = reqwest::Client::builder()
+                .user_agent("Audion/0.1.0 (contact@audion.local)")
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
 
-            if let Some(dur) = duration {
-                request = request.query(&[("duration", &dur.to_string())]);
+            let mut query_params = vec![
+                ("artist_name".to_string(), clean_artist.clone()),
+                ("track_name".to_string(), clean_title.clone()),
+            ];
+
+            if let Some(ref alb) = album {
+                if !alb.trim().is_empty() {
+                    query_params.push(("album_name".to_string(), clean_metadata_string(alb)));
+                }
             }
 
-            let response = request.timeout(std::time::Duration::from_secs(5))
+            if let Some(dur) = duration {
+                query_params.push(("duration".to_string(), dur.to_string()));
+            }
+
+            let response = client.get("https://lrclib.net/api/get")
+                .query(&query_params)
+                .timeout(std::time::Duration::from_secs(5))
                 .send()
                 .await;
 
@@ -470,6 +485,24 @@ pub async fn get_track_lyrics(
                 }
                 Err(err) => {
                     error!("Failed to fetch lyrics from LRCLIB: {}", err);
+                }
+            }
+
+            // Cache successfully fetched lyrics in the DB
+            if let Some(ref lrc_text) = lyrics {
+                let mut map = metadata_json
+                    .and_then(|s| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&s).ok())
+                    .unwrap_or_default();
+
+                if !map.contains_key("Lyrics") {
+                    map.insert("Lyrics".to_string(), serde_json::Value::String(lrc_text.clone()));
+                    if let Ok(updated_json) = serde_json::to_string(&map) {
+                        let _ = sqlx::query("UPDATE tracks SET metadata_json = ? WHERE id = ?")
+                            .bind(updated_json)
+                            .bind(id)
+                            .execute(&state.pool)
+                            .await;
+                    }
                 }
             }
         }

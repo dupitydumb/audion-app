@@ -296,13 +296,10 @@ pub async fn get_fetch_status(
     })
 }
 
-pub async fn start_scan(
-    _claims: Claims,
-    State(state): State<AppState>,
-) -> Result<StatusCode, (StatusCode, String)> {
+pub fn trigger_auto_scan(state: AppState) -> bool {
     let mut status = state.scan_status.lock().unwrap();
     if status.is_scanning {
-        return Err((StatusCode::CONFLICT, "Scan already in progress".to_string()));
+        return false;
     }
 
     status.is_scanning = true;
@@ -510,7 +507,18 @@ pub async fn start_scan(
         info!("Background music directory scan completed.");
     });
 
-    Ok(StatusCode::ACCEPTED)
+    true
+}
+
+pub async fn start_scan(
+    _claims: Claims,
+    State(state): State<AppState>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if trigger_auto_scan(state) {
+        Ok(StatusCode::ACCEPTED)
+    } else {
+        Err((StatusCode::CONFLICT, "Scan already in progress".to_string()))
+    }
 }
 
 pub async fn start_metadata_fetcher(

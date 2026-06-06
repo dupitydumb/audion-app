@@ -8,6 +8,8 @@ pub mod search;
 pub mod stream;
 pub mod events;
 pub mod library;
+pub mod users;
+pub mod subsonic;
 
 use axum::{
     routing::{get, post, put, delete},
@@ -54,6 +56,17 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/profile", put(auth::update_profile))
+        .route("/api/admin/users", get(users::list_users).post(users::create_user))
+        .route("/api/admin/users/:id", put(users::update_user).delete(users::delete_user))
+        .route("/rest/ping.view", get(subsonic::ping).post(subsonic::ping))
+        .route("/rest/getLicense.view", get(subsonic::get_license).post(subsonic::get_license))
+        .route("/rest/getMusicFolders.view", get(subsonic::get_music_folders).post(subsonic::get_music_folders))
+        .route("/rest/getIndexes.view", get(subsonic::get_indexes).post(subsonic::get_indexes))
+        .route("/rest/getMusicDirectory.view", get(subsonic::get_music_directory).post(subsonic::get_music_directory))
+        .route("/rest/getSong.view", get(subsonic::get_song).post(subsonic::get_song))
+        .route("/rest/stream", get(subsonic::stream).post(subsonic::stream))
+        .route("/rest/stream.view", get(subsonic::stream).post(subsonic::stream))
+        .route("/rest/scrobble.view", get(subsonic::scrobble).post(subsonic::scrobble))
         .route("/api/tracks", get(tracks::get_tracks).post(tracks::upload_track))
         .route("/api/tracks/:id", get(tracks::get_track_by_id).delete(tracks::delete_track))
         .route("/api/tracks/:id/metadata", put(tracks::update_track_metadata))

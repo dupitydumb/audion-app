@@ -13,9 +13,19 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             id TEXT PRIMARY KEY,
             username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
+            role TEXT DEFAULT 'User',
+            listenbrainz_token TEXT,
+            is_enabled INTEGER DEFAULT 1,
+            subsonic_password TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );"
     ).execute(pool).await?;
+
+    // Try to alter users table for existing databases to add role, listenbrainz_token, is_enabled, and subsonic_password
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'User'").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN listenbrainz_token TEXT").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN is_enabled INTEGER DEFAULT 1").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN subsonic_password TEXT").execute(pool).await;
 
     // Create albums table (matching client)
     sqlx::query(
@@ -110,6 +120,22 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         );"
     ).execute(pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);").execute(pool).await?;
+
+    // Create play_log table for server-side listening history
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS play_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            track_id INTEGER NOT NULL,
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+            duration_played INTEGER NOT NULL,
+            client TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+        );"
+    ).execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_play_log_user ON play_log(user_id);").execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_play_log_track ON play_log(track_id);").execute(pool).await?;
 
     // Prune events older than 24 hours on startup
     if let Err(e) = sqlx::query("DELETE FROM events WHERE datetime(created_at) < datetime('now', '-24 hours')")

@@ -30,6 +30,8 @@ pub struct LoginResponse {
 pub struct UserResponse {
     pub id: String,
     pub username: String,
+    pub role: String,
+    pub listenbrainz_token: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -37,6 +39,9 @@ struct DbUser {
     id: String,
     username: String,
     password_hash: String,
+    role: String,
+    listenbrainz_token: Option<String>,
+    is_enabled: i32,
 }
 
 pub async fn login(
@@ -44,7 +49,7 @@ pub async fn login(
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, (StatusCode, &'static str)> {
     let user = sqlx::query_as::<_, DbUser>(
-        "SELECT id, username, password_hash FROM users WHERE username = ?"
+        "SELECT id, username, password_hash, role, listenbrainz_token, is_enabled FROM users WHERE username = ?"
     )
     .bind(&payload.username)
     .fetch_optional(&state.pool)
@@ -52,11 +57,15 @@ pub async fn login(
     .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?
     .ok_or((StatusCode::UNAUTHORIZED, "Invalid username or password"))?;
 
+    if user.is_enabled == 0 {
+        return Err((StatusCode::FORBIDDEN, "Account is disabled. Please contact your administrator."));
+    }
+
     if !verify_password(&payload.password, &user.password_hash) {
         return Err((StatusCode::UNAUTHORIZED, "Invalid username or password"));
     }
 
-    let token = generate_token(&user.id, &user.username, &state.config.jwt_secret)
+    let token = generate_token(&user.id, &user.username, &user.role, &state.config.jwt_secret)
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Token generation failed"))?;
 
     Ok(Json(LoginResponse {
@@ -64,17 +73,35 @@ pub async fn login(
         user: UserResponse {
             id: user.id,
             username: user.username,
+            role: user.role,
+            listenbrainz_token: user.listenbrainz_token,
         },
     }))
 }
 
 pub async fn me(
     claims: Claims,
-) -> Json<UserResponse> {
-    Json(UserResponse {
-        id: claims.sub,
-        username: claims.username,
-    })
+    State(state): State<AppState>,
+) -> Result<Json<UserResponse>, (StatusCode, &'static str)> {
+    let user = sqlx::query_as::<_, DbUser>(
+        "SELECT id, username, password_hash, role, listenbrainz_token, is_enabled FROM users WHERE id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?
+    .ok_or((StatusCode::UNAUTHORIZED, "User not found"))?;
+
+    if user.is_enabled == 0 {
+        return Err((StatusCode::FORBIDDEN, "Account is disabled. Please contact your administrator."));
+    }
+
+    Ok(Json(UserResponse {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        listenbrainz_token: user.listenbrainz_token,
+    }))
 }
 
 pub async fn update_profile(
@@ -86,13 +113,17 @@ pub async fn update_profile(
 
     // Fetch current user from database
     let user = sqlx::query_as::<_, DbUser>(
-        "SELECT id, username, password_hash FROM users WHERE id = ?"
+        "SELECT id, username, password_hash, role, listenbrainz_token, is_enabled FROM users WHERE id = ?"
     )
     .bind(&user_id)
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::UNAUTHORIZED, "User not found".to_string()))?;
+
+    if user.is_enabled == 0 {
+        return Err((StatusCode::FORBIDDEN, "Account is disabled.".to_string()));
+    }
 
     // Verify current password
     if !verify_password(&payload.current_password, &user.password_hash) {
@@ -138,7 +169,7 @@ pub async fn update_profile(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Generate new token
-    let token = generate_token(&user_id, &updated_username, &state.config.jwt_secret)
+    let token = generate_token(&user_id, &updated_username, &user.role, &state.config.jwt_secret)
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Token generation failed".to_string()))?;
 
     Ok(Json(LoginResponse {
@@ -146,6 +177,8 @@ pub async fn update_profile(
         user: UserResponse {
             id: user_id,
             username: updated_username,
+            role: user.role,
+            listenbrainz_token: user.listenbrainz_token,
         },
     }))
 }

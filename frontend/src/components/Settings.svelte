@@ -1,18 +1,20 @@
 <script lang="ts">
-  import { Shield, Database, Key, HelpCircle, LogOut, RefreshCw, FolderSync, Trash2, User, Cpu, FileText, CheckCircle2, AlertTriangle } from '@lucide/svelte';
+  import { Shield, Database, Key, HelpCircle, LogOut, RefreshCw, FolderSync, Trash2, User, Users, Cpu, FileText, CheckCircle2, AlertTriangle, Edit2, UserPlus, Check, X } from '@lucide/svelte';
 
   // Props in Svelte 5
-  let { token, username, scanStatus, fetcherStatus, onLogout, addToast, onProfileUpdate } = $props<{
+  let { token, username, role, listenbrainzToken, scanStatus, fetcherStatus, onLogout, addToast, onProfileUpdate } = $props<{
     token: string;
     username: string;
+    role: string;
+    listenbrainzToken: string;
     scanStatus: { isScanning: boolean; filesScanned: number; totalFiles: number; currentFile: string | null };
     fetcherStatus: { isRunning: boolean; tracksProcessed: number; totalTracks: number; currentTrack: string | null; logs: string[] };
     onLogout: () => void;
     addToast: (message: string, type: 'success' | 'error' | 'info') => void;
-    onProfileUpdate: (newToken: string, newUsername: string) => void;
+    onProfileUpdate: (newToken: string, newUsername: string, newRole: string, newLbToken: string) => void;
   }>();
 
-  let activeTab = $state<'profile' | 'library' | 'system'>('profile');
+  let activeTab = $state<'profile' | 'users' | 'library' | 'system'>('profile');
 
   // Profile Form States
   let currentPassword = $state('');
@@ -75,7 +77,7 @@
       }
 
       const data = await res.json();
-      onProfileUpdate(data.token, data.user.username);
+      onProfileUpdate(data.token, data.user.username, data.user.role, data.user.listenbrainz_token || '');
       addToast('Admin credentials updated successfully', 'success');
       currentPassword = '';
       newUsername = '';
@@ -172,6 +174,198 @@
       isResetting = false;
     }
   }
+
+  // User Management States
+  let usersList = $state<any[]>([]);
+  let isLoadingUsers = $state(false);
+  let isCreatingUser = $state(false);
+  
+  // Create Form
+  let createUsername = $state('');
+  let createPassword = $state('');
+  let createRole = $state('User');
+  let isCreating = $state(false);
+
+  // Edit Form
+  let editingUserId = $state<string | null>(null);
+  let editUsername = $state('');
+  let editPassword = $state('');
+  let editRole = $state('User');
+  let editIsEnabled = $state(1);
+  let editLbToken = $state('');
+  let isUpdating = $state(false);
+
+  async function fetchUsers() {
+    isLoadingUsers = true;
+    try {
+      const res = await fetch('/api/admin/users', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        usersList = await res.json();
+      } else {
+        throw new Error();
+      }
+    } catch (e) {
+      addToast('Failed to fetch user list', 'error');
+    } finally {
+      isLoadingUsers = false;
+    }
+  }
+
+  // ListenBrainz token updater for current user
+  let myLbToken = $state(listenbrainzToken);
+  let isSavingLbToken = $state(false);
+
+  async function handleUpdateMyLbToken(e: SubmitEvent) {
+    e.preventDefault();
+    isSavingLbToken = true;
+    try {
+      // Find my own user ID
+      const meRes = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!meRes.ok) throw new Error('Failed to resolve current profile');
+      const meData = await meRes.json();
+      
+      const res = await fetch(`/api/admin/users/${meData.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          listenbrainz_token: myLbToken.trim() || null
+        })
+      });
+
+      if (!res.ok) throw new Error('Failed to save ListenBrainz token');
+      
+      onProfileUpdate(token, username, role, myLbToken.trim());
+      addToast('ListenBrainz token updated successfully', 'success');
+    } catch (err: any) {
+      addToast(err.message || 'Failed to update ListenBrainz token', 'error');
+    } finally {
+      isSavingLbToken = false;
+    }
+  }
+
+  async function handleCreateUser(e: SubmitEvent) {
+    e.preventDefault();
+    if (!createUsername.trim() || !createPassword.trim()) {
+      addToast('Username and password are required', 'error');
+      return;
+    }
+    isCreating = true;
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          username: createUsername.trim(),
+          password: createPassword.trim(),
+          role: createRole
+        })
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Failed to create user');
+      }
+
+      addToast('User created successfully', 'success');
+      createUsername = '';
+      createPassword = '';
+      createRole = 'User';
+      isCreatingUser = false;
+      fetchUsers();
+    } catch (err: any) {
+      addToast(err.message || 'Failed to create user', 'error');
+    } finally {
+      isCreating = false;
+    }
+  }
+
+  async function handleUpdateUser(userId: string) {
+    isUpdating = true;
+    try {
+      const payload: any = {
+        username: editUsername.trim() || undefined,
+        role: editRole || undefined,
+        is_enabled: editIsEnabled,
+        listenbrainz_token: editLbToken.trim() || null
+      };
+      if (editPassword.trim()) {
+        payload.password = editPassword.trim();
+      }
+
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Failed to update user');
+      }
+
+      addToast('User updated successfully', 'success');
+      editingUserId = null;
+      editPassword = '';
+      fetchUsers();
+    } catch (err: any) {
+      addToast(err.message || 'Failed to update user', 'error');
+    } finally {
+      isUpdating = false;
+    }
+  }
+
+  async function handleDeleteUser(userId: string, targetUsername: string) {
+    if (targetUsername === username) {
+      addToast('You cannot delete your own account', 'error');
+      return;
+    }
+    if (!confirm(`Are you sure you want to delete user ${targetUsername}?`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        addToast('User deleted successfully', 'success');
+        fetchUsers();
+      } else {
+        const text = await res.text();
+        throw new Error(text || 'Failed to delete user');
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Failed to delete user', 'error');
+    }
+  }
+
+  function startEditing(user: any) {
+    editingUserId = user.id;
+    editUsername = user.username;
+    editPassword = '';
+    editRole = user.role;
+    editIsEnabled = user.is_enabled;
+    editLbToken = user.listenbrainz_token || '';
+  }
+
+  $effect(() => {
+    if (activeTab === 'users' && role === 'Admin') {
+      fetchUsers();
+    }
+  });
 </script>
 
 <div class="page-header">
@@ -188,6 +382,14 @@
     >
       <User size={16} /> Profile Settings
     </button>
+    {#if role === 'Admin'}
+      <button 
+        onclick={() => activeTab = 'users'} 
+        class="tab-btn {activeTab === 'users' ? 'active' : ''}"
+      >
+        <Users size={16} /> User Management
+      </button>
+    {/if}
     <button 
       onclick={() => activeTab = 'library'} 
       class="tab-btn {activeTab === 'library' ? 'active' : ''}"
@@ -211,8 +413,8 @@
             <Shield size={24} />
           </div>
           <div>
-            <h3 style="font-family: var(--font-heading); font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem;">Active Administrator</h3>
-            <p style="font-size: 0.85rem; color: var(--text-secondary);">Logged in as <strong style="color: var(--text-primary);">{username}</strong></p>
+            <h3 style="font-family: var(--font-heading); font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem;">Active Account</h3>
+            <p style="font-size: 0.85rem; color: var(--text-secondary);">Logged in as <strong style="color: var(--text-primary);">{username}</strong> ({role})</p>
           </div>
         </div>
         <button onclick={onLogout} class="btn btn-danger" style="display: flex; gap: 0.5rem; align-items: center;">
@@ -223,7 +425,7 @@
       <div class="glass-card" style="padding: 1.5rem;">
         <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
           <Key size={18} style="color: var(--accent);" />
-          <h3 style="font-family: var(--font-heading); font-size: 1.15rem; font-weight: 600;">Update Admin Credentials</h3>
+          <h3 style="font-family: var(--font-heading); font-size: 1.15rem; font-weight: 600;">Update Profile Credentials</h3>
         </div>
 
         <form onsubmit={handleUpdateProfile}>
@@ -292,6 +494,220 @@
             </button>
           </div>
         </form>
+      </div>
+
+      <div class="glass-card" style="padding: 1.5rem;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+          <Database size={18} style="color: var(--accent);" />
+          <h3 style="font-family: var(--font-heading); font-size: 1.15rem; font-weight: 600;">ListenBrainz Scrobbling</h3>
+        </div>
+
+        <form onsubmit={handleUpdateMyLbToken}>
+          <div class="form-group" style="margin-bottom: 1.5rem;">
+            <label class="form-label" for="myLbToken">User Token</label>
+            <input 
+              type="password" 
+              id="myLbToken" 
+              class="form-input" 
+              style="width: 100%;" 
+              placeholder="Enter your ListenBrainz user token for automatic server scrobbling"
+              bind:value={myLbToken}
+            />
+            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.5rem;">
+              You can get your user token from your ListenBrainz account profile settings page.
+            </p>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end;">
+            <button type="submit" class="btn btn-primary" style="display: flex; gap: 0.5rem; align-items: center;" disabled={isSavingLbToken}>
+              {#if isSavingLbToken}
+                <RefreshCw size={16} class="animate-spin" style="animation: spin 1s linear infinite;" /> Saving...
+              {:else}
+                Save Token
+              {/if}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  <!-- User Management Tab -->
+  {:else if activeTab === 'users' && role === 'Admin'}
+    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+      <div class="glass-card" style="padding: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <h3 style="font-family: var(--font-heading); font-size: 1.15rem; font-weight: 600; margin-bottom: 0.25rem;">User Management</h3>
+          <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">Create and manage user accounts, roles, and status.</p>
+        </div>
+        <button 
+          onclick={() => {
+            isCreatingUser = !isCreatingUser;
+            editingUserId = null;
+          }} 
+          class="btn btn-primary" 
+          style="display: flex; gap: 0.5rem; align-items: center;"
+        >
+          {#if isCreatingUser}
+            Cancel
+          {:else}
+            <UserPlus size={16} /> Add User
+          {/if}
+        </button>
+      </div>
+
+      {#if isCreatingUser}
+        <div class="glass-card" style="padding: 1.5rem;">
+          <h3 style="font-family: var(--font-heading); font-size: 1.1rem; font-weight: 600; margin-bottom: 1.25rem;">Create New User Account</h3>
+          <form onsubmit={handleCreateUser}>
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+              <div class="form-group">
+                <label class="form-label" for="createUsername">Username</label>
+                <input 
+                  type="text" 
+                  id="createUsername" 
+                  class="form-input" 
+                  style="width: 100%;" 
+                  placeholder="Enter username"
+                  bind:value={createUsername}
+                  required
+                />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="createPassword">Password</label>
+                <input 
+                  type="password" 
+                  id="createPassword" 
+                  class="form-input" 
+                  style="width: 100%;" 
+                  placeholder="Minimum 6 characters"
+                  bind:value={createPassword}
+                  required
+                />
+              </div>
+
+              <div class="form-group" style="grid-column: span 2;">
+                <label class="form-label" for="createRole">User Role</label>
+                <select 
+                  id="createRole"
+                  class="form-input" 
+                  style="width: 100%; height: auto; padding: 0.5rem 0.75rem;" 
+                  bind:value={createRole}
+                >
+                  <option value="Admin">Admin (Full Control)</option>
+                  <option value="User">User (Standard Access)</option>
+                  <option value="StreamOnly">StreamOnly (Playback Only)</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+              <button type="button" onclick={() => isCreatingUser = false} class="btn btn-secondary">Cancel</button>
+              <button type="submit" class="btn btn-primary" disabled={isCreating}>
+                {#if isCreating}
+                  Creating...
+                {:else}
+                  Create User
+                {/if}
+              </button>
+            </div>
+          </form>
+        </div>
+      {/if}
+
+      <div class="glass-card" style="padding: 1.5rem;">
+        {#if isLoadingUsers}
+          <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+            <RefreshCw size={24} class="animate-spin" style="animation: spin 1s linear infinite; margin: 0 auto 1rem;" />
+            <span>Loading user list...</span>
+          </div>
+        {:else if usersList.length === 0}
+          <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+            No users registered.
+          </div>
+        {:else}
+          <div style="overflow-x: auto;">
+            <table class="library-table" style="width: 100%; font-size: 0.9rem; border-top: 1px solid var(--border-color);">
+              <thead>
+                <tr>
+                  <th style="text-align: left; padding: 0.75rem;">Username</th>
+                  <th style="text-align: left; padding: 0.75rem;">Role</th>
+                  <th style="text-align: left; padding: 0.75rem;">ListenBrainz Token</th>
+                  <th style="text-align: left; padding: 0.75rem;">Status</th>
+                  <th style="text-align: right; padding: 0.75rem;">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each usersList as u}
+                  <tr>
+                    <td style="padding: 0.75rem; vertical-align: middle;">
+                      {#if editingUserId === u.id}
+                        <input type="text" class="form-input" style="padding: 0.35rem 0.5rem; font-size: 0.85rem;" bind:value={editUsername} />
+                      {:else}
+                        <span style="font-weight: 500; color: var(--text-primary);">{u.username}</span>
+                      {/if}
+                    </td>
+                    <td style="padding: 0.75rem; vertical-align: middle;">
+                      {#if editingUserId === u.id}
+                        <select class="form-input" style="padding: 0.35rem; font-size: 0.85rem; height: auto;" bind:value={editRole}>
+                          <option value="Admin">Admin</option>
+                          <option value="User">User</option>
+                          <option value="StreamOnly">StreamOnly</option>
+                        </select>
+                      {:else}
+                        <span style="font-size: 0.8rem; text-transform: uppercase; background: rgba(255,255,255,0.06); padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid var(--border-color); color: var(--text-secondary);">{u.role}</span>
+                      {/if}
+                    </td>
+                    <td style="padding: 0.75rem; vertical-align: middle;">
+                      {#if editingUserId === u.id}
+                        <input type="password" class="form-input" style="padding: 0.35rem 0.5rem; font-size: 0.85rem;" placeholder="Change token" bind:value={editLbToken} />
+                      {:else if u.listenbrainz_token}
+                        <span style="color: var(--success); display: flex; align-items: center; gap: 0.25rem;"><Check size={14} /> Configured</span>
+                      {:else}
+                        <span style="color: var(--text-muted); display: flex; align-items: center; gap: 0.25rem;"><X size={14} /> None</span>
+                      {/if}
+                    </td>
+                    <td style="padding: 0.75rem; vertical-align: middle;">
+                      {#if editingUserId === u.id}
+                        <select class="form-input" style="padding: 0.35rem; font-size: 0.85rem; height: auto;" bind:value={editIsEnabled}>
+                          <option value={1}>Enabled</option>
+                          <option value={0}>Disabled</option>
+                        </select>
+                      {:else if u.is_enabled === 1}
+                        <span style="color: var(--success); font-weight: 500;">Enabled</span>
+                      {:else}
+                        <span style="color: var(--danger); font-weight: 500;">Disabled</span>
+                      {/if}
+                    </td>
+                    <td style="padding: 0.75rem; text-align: right; vertical-align: middle;">
+                      {#if editingUserId === u.id}
+                        <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                          <button onclick={() => handleUpdateUser(u.id)} class="btn btn-primary" style="padding: 0.35rem 0.5rem; font-size: 0.8rem;" disabled={isUpdating}>
+                            Save
+                          </button>
+                          <button onclick={() => editingUserId = null} class="btn btn-secondary" style="padding: 0.35rem 0.5rem; font-size: 0.8rem;">
+                            Cancel
+                          </button>
+                        </div>
+                      {:else}
+                        <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                          <button onclick={() => startEditing(u)} class="btn btn-secondary" style="padding: 0.35rem 0.5rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.25rem;">
+                            <Edit2 size={12} /> Edit
+                          </button>
+                          {#if u.username !== username}
+                            <button onclick={() => handleDeleteUser(u.id, u.username)} class="btn btn-danger" style="padding: 0.35rem 0.5rem; font-size: 0.8rem;">
+                              Delete
+                            </button>
+                          {/if}
+                        </div>
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
       </div>
     </div>
 

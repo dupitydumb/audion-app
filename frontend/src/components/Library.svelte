@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Play, Pause, Trash2, Search, Music, Disc, AlertCircle, RefreshCw, Heart, Plus, Pencil } from '@lucide/svelte';
+  import { Play, Pause, Trash2, Search, Music, Disc, AlertCircle, RefreshCw, Heart, Plus, Pencil, MoreVertical } from '@lucide/svelte';
 
-  let { token, currentPlayingId, isPlaying, likedTrackIds, onPlayTrack, onToggleLike, addToast } = $props<{
+  let { token, currentPlayingId, isPlaying, likedTrackIds, onPlayTrack, onToggleLike, addToast, isMobile, openActionSheet } = $props<{
     token: string;
     currentPlayingId: number | null;
     isPlaying: boolean;
@@ -10,6 +10,8 @@
     onPlayTrack: (track: { id: number; title: string; artist: string; format?: string | null; bitrate?: number | null }, queue?: any[]) => void;
     onToggleLike: (trackId: number) => void;
     addToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    isMobile: boolean;
+    openActionSheet: (track: any, type: 'library' | 'liked' | 'playlist' | 'artist' | 'album', callbacks?: any) => void;
   }>();
 
   interface Track {
@@ -456,166 +458,229 @@
       <p style="font-size: 0.85rem; color: var(--text-muted);">Try uploading files to add them to your library.</p>
     </div>
     {:else}
-    {#if tracks.length > 0 && selectedTrackIds.length === 0}
-      <div class="bulk-hint" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; margin-bottom: 1rem; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 8px; font-size: 0.8rem; color: var(--text-muted);">
-        <AlertCircle size={14} />
-        <span>Select tracks using the checkboxes to perform bulk actions like metadata fetching, playlist adding, or deletion.</span>
-      </div>
-    {/if}
-    <div style="overflow-x: auto;">
-      <table class="library-table" style="font-size: 0.95rem;">
-        <thead>
-          <tr>
-            <th style="width: 40px; text-align: center; vertical-align: middle;">
-              <input 
-                type="checkbox" 
-                checked={tracks.length > 0 && selectedTrackIds.length === tracks.length}
-                onchange={toggleSelectAll}
-                style="cursor: pointer; accent-color: var(--accent); scale: 1.1;"
-              />
-            </th>
-            <th style="width: 50px;"></th>
-            <th>Title</th>
-            <th>Artist</th>
-            <th>Album</th>
-            <th style="width: 80px; text-align: right;">Length</th>
-            <th style="width: 60px; text-align: center;">Format</th>
-            <th style="width: 120px; text-align: center;">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
+      {#if isMobile}
+        <div class="mobile-track-list">
           {#each tracks as track (track.id)}
-            <tr>
-              <td style="text-align: center; vertical-align: middle;">
-                <input 
-                  type="checkbox" 
-                  checked={selectedTrackIds.includes(track.id)}
-                  onchange={() => toggleTrackSelection(track.id)}
-                  style="cursor: pointer; accent-color: var(--accent); scale: 1.1;"
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div 
+              class="mobile-track-item" 
+              class:active={currentPlayingId === track.id}
+              onclick={() => onPlayTrack({ 
+                id: track.id, 
+                title: track.title || 'Unknown Title', 
+                artist: track.artist || 'Unknown Artist',
+                format: track.format,
+                bitrate: track.bitrate
+              }, tracks.map(t => ({
+                id: t.id,
+                title: t.title || 'Unknown Title',
+                artist: t.artist || 'Unknown Artist',
+                format: t.format,
+                bitrate: t.bitrate
+              })))}
+            >
+              <div class="track-thumbnail" style="width: 40px; height: 40px; border-radius: 6px;">
+                <img 
+                  src="/api/tracks/{track.id}/cover?token={token}" 
+                  alt="" 
+                  onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
                 />
-              </td>
-              <td>
-                <button 
-                  onclick={() => onPlayTrack({ 
-                    id: track.id, 
-                    title: track.title || 'Unknown Title', 
-                    artist: track.artist || 'Unknown Artist',
-                    format: track.format,
-                    bitrate: track.bitrate
-                  }, tracks.map(t => ({
-                    id: t.id,
-                    title: t.title || 'Unknown Title',
-                    artist: t.artist || 'Unknown Artist',
-                    format: t.format,
-                    bitrate: t.bitrate
-                  })))} 
-                  class="btn" 
-                  style="background: rgba(255,255,255,0.04); border: 1px solid var(--border-color); border-radius: 50%; width: 32px; height: 32px; padding: 0; display: flex; align-items: center; justify-content: center; color: var(--text-primary);"
-                >
-                  {#if currentPlayingId === track.id && isPlaying}
-                    <Pause size={14} fill="currentColor" />
-                  {:else}
-                    <Play size={14} fill="currentColor" style="margin-left: 2px;" />
+                <Music size={16} style="color: var(--text-muted);" />
+              </div>
+              
+              <div class="mobile-track-item-info">
+                <div class="mobile-track-item-title">{track.title || 'Unknown Title'}</div>
+                <div class="mobile-track-item-artist">{track.artist || 'Unknown Artist'}</div>
+                <div class="mobile-track-item-meta">
+                  {#if track.genre}
+                    <span class="genre-tag" style="font-size: 0.6rem; padding: 0.05rem 0.25rem; margin-right: 0.25rem;">{track.genre}</span>
                   {/if}
-                </button>
-              </td>
-              <td>
-                <div style="display: flex; align-items: center; gap: 0.75rem; font-weight: 500; color: var(--text-primary);">
-                  <div class="track-thumbnail">
-                    <img 
-                      src="/api/tracks/{track.id}/cover?token={token}" 
-                      alt="" 
-                      onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                    />
-                    <Music size={14} style="color: var(--text-muted);" />
-                  </div>
-                  <div style="display: flex; flex-direction: column; gap: 0.2rem; min-width: 0;">
-                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;">
-                      {track.title || 'Unknown Title'}
-                    </span>
-                    {#if track.genre}
-                      <span class="genre-tag">{track.genre}</span>
-                    {/if}
-                  </div>
+                  <span>{formatDuration(track.duration)}</span>
                 </div>
-              </td>
-              <td style="color: var(--text-secondary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                {track.artist || 'Unknown Artist'}
-              </td>
-              <td style="color: var(--text-secondary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                <div style="display: flex; align-items: center; gap: 0.4rem;">
-                  <Disc size={14} style="color: var(--text-muted);" />
-                  <span>{track.album || 'Unknown Album'}</span>
-                </div>
-              </td>
-              <td style="color: var(--text-secondary); text-align: right; font-family: monospace;">{formatDuration(track.duration)}</td>
-              <td style="text-align: center;">
-                <span style="font-size: 0.75rem; text-transform: uppercase; background: rgba(255,255,255,0.03); padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--border-color); color: var(--text-secondary);">
-                  {track.format || 'mp3'}
-                </span>
-              </td>
-              <td>
-                <div style="display: flex; justify-content: center; align-items: center; gap: 0.5rem;">
-                  <button 
-                    onclick={() => onToggleLike(track.id)} 
-                    class="btn" 
-                    style="background: transparent; border: none; color: {likedTrackIds.includes(track.id) ? 'var(--danger)' : 'var(--text-muted)'}; padding: 0.25rem;"
-                    title={likedTrackIds.includes(track.id) ? 'Unlike track' : 'Like track'}
-                  >
-                    <Heart size={16} fill={likedTrackIds.includes(track.id) ? 'currentColor' : 'none'} />
-                  </button>
+              </div>
 
-                  <div style="position: relative;">
+              <div class="mobile-track-item-actions" onclick={(e) => e.stopPropagation()}>
+                <button 
+                  onclick={() => openActionSheet(
+                    { id: track.id, title: track.title || 'Unknown Title', artist: track.artist || 'Unknown Artist', genre: track.genre, duration: track.duration },
+                    'library',
+                    {
+                      onDelete: () => handleDelete(track.id, track.title),
+                      onEdit: () => openEditModal(track)
+                    }
+                  )}
+                  class="mobile-action-trigger"
+                  aria-label="Track actions"
+                >
+                  <MoreVertical size={18} />
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        {#if tracks.length > 0 && selectedTrackIds.length === 0}
+          <div class="bulk-hint" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; margin-bottom: 1rem; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 8px; font-size: 0.8rem; color: var(--text-muted);">
+            <AlertCircle size={14} />
+            <span>Select tracks using the checkboxes to perform bulk actions like metadata fetching, playlist adding, or deletion.</span>
+          </div>
+        {/if}
+        <div style="overflow-x: auto;">
+          <table class="library-table" style="font-size: 0.95rem;">
+            <thead>
+              <tr>
+                <th style="width: 40px; text-align: center; vertical-align: middle;">
+                  <input 
+                    type="checkbox" 
+                    checked={tracks.length > 0 && selectedTrackIds.length === tracks.length}
+                    onchange={toggleSelectAll}
+                    style="cursor: pointer; accent-color: var(--accent); scale: 1.1;"
+                  />
+                </th>
+                <th style="width: 50px;"></th>
+                <th>Title</th>
+                <th>Artist</th>
+                <th class="hide-mobile">Album</th>
+                <th style="width: 80px; text-align: right;">Length</th>
+                <th style="width: 60px; text-align: center;" class="hide-mobile">Format</th>
+                <th style="width: 120px; text-align: center;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each tracks as track (track.id)}
+                <tr>
+                  <td style="text-align: center; vertical-align: middle;">
+                    <input 
+                      type="checkbox" 
+                      checked={selectedTrackIds.includes(track.id)}
+                      onchange={() => toggleTrackSelection(track.id)}
+                      style="cursor: pointer; accent-color: var(--accent); scale: 1.1;"
+                    />
+                  </td>
+                  <td>
                     <button 
-                      onclick={(e) => togglePlaylistDropdown(track.id, e)} 
+                      onclick={() => onPlayTrack({ 
+                        id: track.id, 
+                        title: track.title || 'Unknown Title', 
+                        artist: track.artist || 'Unknown Artist',
+                        format: track.format,
+                        bitrate: track.bitrate
+                      }, tracks.map(t => ({
+                        id: t.id,
+                        title: t.title || 'Unknown Title',
+                        artist: t.artist || 'Unknown Artist',
+                        format: t.format,
+                        bitrate: t.bitrate
+                      })))} 
                       class="btn" 
-                      style="background: transparent; border: none; color: var(--text-muted); padding: 0.25rem;"
-                      title="Add to playlist"
+                      style="background: rgba(255,255,255,0.04); border: 1px solid var(--border-color); border-radius: 50%; width: 32px; height: 32px; padding: 0; display: flex; align-items: center; justify-content: center; color: var(--text-primary);"
                     >
-                      <Plus size={16} />
+                      {#if currentPlayingId === track.id && isPlaying}
+                        <Pause size={14} fill="currentColor" />
+                      {:else}
+                        <Play size={14} fill="currentColor" style="margin-left: 2px;" />
+                      {/if}
                     </button>
-                    {#if openPlaylistDropdownId === track.id}
-                      <div class="playlist-dropdown glass-card">
-                        {#if playlists.length === 0}
-                          <div style="padding: 0.5rem; font-size: 0.75rem; color: var(--text-muted); white-space: nowrap;">No playlists.</div>
-                        {:else}
-                          {#each playlists as pl}
-                            <button 
-                              onclick={() => addTrackToPlaylist(track.id, pl.id)} 
-                              class="dropdown-item"
-                            >
-                              {pl.name}
-                            </button>
-                          {/each}
+                  </td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 0.75rem; font-weight: 500; color: var(--text-primary);">
+                      <div class="track-thumbnail">
+                        <img 
+                          src="/api/tracks/{track.id}/cover?token={token}" 
+                          alt="" 
+                          onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                        />
+                        <Music size={14} style="color: var(--text-muted);" />
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 0.2rem; min-width: 0;">
+                        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;">
+                          {track.title || 'Unknown Title'}
+                        </span>
+                        {#if track.genre}
+                          <span class="genre-tag">{track.genre}</span>
                         {/if}
                       </div>
-                    {/if}
-                  </div>
-
-                  <button 
-                    onclick={() => openEditModal(track)} 
-                    class="btn" 
-                    style="background: transparent; border: none; color: var(--text-muted); padding: 0.25rem;"
-                    title="Edit metadata"
-                  >
-                    <Pencil size={16} class="hover:text-accent" style="transition: color 0.2s;" />
-                  </button>
-
-                  <button 
-                    onclick={() => handleDelete(track.id, track.title)} 
-                    class="btn" 
-                    style="background: transparent; border: none; color: var(--text-muted); padding: 0.25rem;"
-                    title="Delete track"
-                  >
-                    <Trash2 size={16} class="hover:text-red-500" style="transition: color 0.2s;" />
-                  </button>
-                </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+                    </div>
+                  </td>
+                  <td style="color: var(--text-secondary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    {track.artist || 'Unknown Artist'}
+                  </td>
+                  <td class="hide-mobile" style="color: var(--text-secondary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <div style="display: flex; align-items: center; gap: 0.4rem;">
+                      <Disc size={14} style="color: var(--text-muted);" />
+                      <span>{track.album || 'Unknown Album'}</span>
+                    </div>
+                  </td>
+                  <td style="color: var(--text-secondary); text-align: right; font-family: monospace;">{formatDuration(track.duration)}</td>
+                  <td class="hide-mobile" style="text-align: center;">
+                    <span style="font-size: 0.75rem; text-transform: uppercase; background: rgba(255,255,255,0.03); padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--border-color); color: var(--text-secondary);">
+                      {track.format || 'mp3'}
+                    </span>
+                  </td>
+                  <td>
+                    <div style="display: flex; justify-content: center; align-items: center; gap: 0.5rem;">
+                      <button 
+                        onclick={() => onToggleLike(track.id)} 
+                        class="btn" 
+                        style="background: transparent; border: none; color: {likedTrackIds.includes(track.id) ? 'var(--danger)' : 'var(--text-muted)'}; padding: 0.25rem;"
+                        title={likedTrackIds.includes(track.id) ? 'Unlike track' : 'Like track'}
+                      >
+                        <Heart size={16} fill={likedTrackIds.includes(track.id) ? 'currentColor' : 'none'} />
+                      </button>
+  
+                      <div style="position: relative;">
+                        <button 
+                          onclick={(e) => togglePlaylistDropdown(track.id, e)} 
+                          class="btn" 
+                          style="background: transparent; border: none; color: var(--text-muted); padding: 0.25rem;"
+                          title="Add to playlist"
+                        >
+                          <Plus size={16} />
+                        </button>
+                        {#if openPlaylistDropdownId === track.id}
+                          <div class="playlist-dropdown glass-card">
+                            {#if playlists.length === 0}
+                              <div style="padding: 0.5rem; font-size: 0.75rem; color: var(--text-muted); white-space: nowrap;">No playlists.</div>
+                            {:else}
+                              {#each playlists as pl}
+                                <button 
+                                  onclick={() => addTrackToPlaylist(track.id, pl.id)} 
+                                  class="dropdown-item"
+                                >
+                                  {pl.name}
+                                </button>
+                              {/each}
+                            {/if}
+                          </div>
+                        {/if}
+                      </div>
+  
+                      <button 
+                        onclick={() => openEditModal(track)} 
+                        class="btn" 
+                        style="background: transparent; border: none; color: var(--text-muted); padding: 0.25rem;"
+                        title="Edit metadata"
+                      >
+                        <Pencil size={16} class="hover:text-accent" style="transition: color 0.2s;" />
+                      </button>
+  
+                      <button 
+                        onclick={() => handleDelete(track.id, track.title)} 
+                        class="btn" 
+                        style="background: transparent; border: none; color: var(--text-muted); padding: 0.25rem;"
+                        title="Delete track"
+                      >
+                        <Trash2 size={16} class="hover:text-red-500" style="transition: color 0.2s;" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
   {/if}
 </div>
 
@@ -727,7 +792,7 @@
 {/if}
 
 {#if selectedTrackIds.length > 0}
-  <div class="bulk-bar-container" style="min-width: 480px;">
+  <div class="bulk-bar-container">
     <div class="bulk-bar-info">
       <span>Selected</span>
       <span class="bulk-bar-badge">{selectedTrackIds.length}</span>

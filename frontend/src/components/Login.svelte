@@ -3,7 +3,7 @@
 
   // Props in Svelte 5
   let { onLoginSuccess, addToast } = $props<{
-    onLoginSuccess: (token: string, username: string) => void;
+    onLoginSuccess: (token: string, username: string, role: string, listenbrainz_token: string) => void;
     addToast: (message: string, type: 'success' | 'error' | 'info') => void;
   }>();
 
@@ -32,7 +32,7 @@
       }
 
       const data = await res.json();
-      onLoginSuccess(data.token, data.user.username);
+      onLoginSuccess(data.token, data.user.username, data.user.role, data.user.listenbrainz_token || '');
       addToast(`Welcome back, ${data.user.username}!`, 'success');
     } catch (err: any) {
       addToast(err.message || 'Connection failed', 'error');

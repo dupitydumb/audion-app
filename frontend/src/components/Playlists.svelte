@@ -1,13 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Play, Pause, Trash2, ListMusic, Plus, ArrowLeft, ArrowUp, ArrowDown, Music, AlertCircle, RefreshCw } from '@lucide/svelte';
+  import { Play, Pause, Trash2, ListMusic, Plus, ArrowLeft, ArrowUp, ArrowDown, Music, AlertCircle, RefreshCw, MoreVertical } from '@lucide/svelte';
 
-  let { token, currentPlayingId, isPlaying, onPlayTrack, addToast } = $props<{
+  let { token, currentPlayingId, isPlaying, onPlayTrack, addToast, isMobile, openActionSheet } = $props<{
     token: string;
     currentPlayingId: number | null;
     isPlaying: boolean;
     onPlayTrack: (track: { id: number; title: string; artist: string; format?: string | null; bitrate?: number | null }, queue?: any[]) => void;
     addToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    isMobile: boolean;
+    openActionSheet: (track: any, type: 'library' | 'liked' | 'playlist' | 'artist' | 'album', callbacks?: any) => void;
   }>();
 
   interface Playlist {
@@ -263,111 +265,175 @@
         <p style="font-size: 0.85rem; color: var(--text-muted);">Go to the Library tab and click "+" on any track to add it here.</p>
       </div>
     {:else}
-      <div style="overflow-x: auto;">
-        <table class="library-table" style="font-size: 0.95rem;">
-          <thead>
-            <tr>
-              <th style="width: 50px;"></th>
-              <th style="width: 80px; text-align: center;">Order</th>
-              <th>Title</th>
-              <th>Artist</th>
-              <th>Album</th>
-              <th style="width: 80px; text-align: right;">Length</th>
-              <th style="width: 100px; text-align: center;">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each playlistTracks as track, index (track.id)}
+      {#if isMobile}
+        <div class="mobile-track-list">
+          {#each playlistTracks as track, index (track.id)}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div 
+              class="mobile-track-item" 
+              class:active={currentPlayingId === track.id}
+              onclick={() => onPlayTrack({ 
+                id: track.id, 
+                title: track.title || 'Unknown Title', 
+                artist: track.artist || 'Unknown Artist',
+                format: track.format,
+                bitrate: track.bitrate
+              }, playlistTracks.map(t => ({
+                id: t.id,
+                title: t.title || 'Unknown Title',
+                artist: t.artist || 'Unknown Artist',
+                format: t.format,
+                bitrate: t.bitrate
+              })))}
+            >
+              <div class="track-thumbnail" style="width: 40px; height: 40px; border-radius: 6px;">
+                <img 
+                  src="/api/tracks/{track.id}/cover?token={token}" 
+                  alt="" 
+                  onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                />
+                <Music size={16} style="color: var(--text-muted);" />
+              </div>
+              
+              <div class="mobile-track-item-info">
+                <div class="mobile-track-item-title">{track.title || 'Unknown Title'}</div>
+                <div class="mobile-track-item-artist">{track.artist || 'Unknown Artist'}</div>
+                <div class="mobile-track-item-meta">
+                  {#if track.genre}
+                    <span class="genre-tag" style="font-size: 0.6rem; padding: 0.05rem 0.25rem; margin-right: 0.25rem;">{track.genre}</span>
+                  {/if}
+                  <span>{formatDuration(track.duration)}</span>
+                </div>
+              </div>
+
+              <div class="mobile-track-item-actions" onclick={(e) => e.stopPropagation()}>
+                <button 
+                  onclick={() => openActionSheet(
+                    { id: track.id, title: track.title || 'Unknown Title', artist: track.artist || 'Unknown Artist', genre: track.genre, duration: track.duration },
+                    'playlist',
+                    {
+                      onRemoveFromPlaylist: () => removeTrackFromPlaylist(track.id, track.title),
+                      onMoveUp: index > 0 ? () => moveTrack(index, 'up') : undefined,
+                      onMoveDown: index < playlistTracks.length - 1 ? () => moveTrack(index, 'down') : undefined
+                    }
+                  )}
+                  class="mobile-action-trigger"
+                  aria-label="Track actions"
+                >
+                  <MoreVertical size={18} />
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <div style="overflow-x: auto;">
+          <table class="library-table" style="font-size: 0.95rem;">
+            <thead>
               <tr>
-                <td>
-                  <button 
-                    onclick={() => onPlayTrack({ 
-                      id: track.id, 
-                      title: track.title || 'Unknown Title', 
-                      artist: track.artist || 'Unknown Artist',
-                      format: track.format,
-                      bitrate: track.bitrate
-                    }, playlistTracks.map(t => ({
-                      id: t.id,
-                      title: t.title || 'Unknown Title',
-                      artist: t.artist || 'Unknown Artist',
-                      format: t.format,
-                      bitrate: t.bitrate
-                    })))} 
-                    class="btn" 
-                    style="background: rgba(255,255,255,0.04); border: 1px solid var(--border-color); border-radius: 50%; width: 32px; height: 32px; padding: 0; display: flex; align-items: center; justify-content: center; color: var(--text-primary);"
-                  >
-                    {#if currentPlayingId === track.id && isPlaying}
-                      <Pause size={14} fill="currentColor" />
-                    {:else}
-                      <Play size={14} fill="currentColor" style="margin-left: 2px;" />
-                    {/if}
-                  </button>
-                </td>
-                <td>
-                  <div style="display: flex; justify-content: center; align-items: center; gap: 0.25rem;">
-                    <button 
-                      onclick={() => moveTrack(index, 'up')} 
-                      class="btn move-btn" 
-                      disabled={index === 0}
-                      title="Move Up"
-                    >
-                      <ArrowUp size={12} />
-                    </button>
-                    <button 
-                      onclick={() => moveTrack(index, 'down')} 
-                      class="btn move-btn" 
-                      disabled={index === playlistTracks.length - 1}
-                      title="Move Down"
-                    >
-                      <ArrowDown size={12} />
-                    </button>
-                  </div>
-                </td>
-                <td>
-                  <div style="display: flex; align-items: center; gap: 0.75rem; font-weight: 500; color: var(--text-primary);">
-                    <div class="track-thumbnail">
-                      <img 
-                        src="/api/tracks/{track.id}/cover?token={token}" 
-                        alt="" 
-                        onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                      />
-                      <Music size={14} style="color: var(--text-muted);" />
-                    </div>
-                    <div style="display: flex; flex-direction: column; gap: 0.2rem; min-width: 0;">
-                      <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;">
-                        {track.title || 'Unknown Title'}
-                      </span>
-                      {#if track.genre}
-                        <span class="genre-tag">{track.genre}</span>
-                      {/if}
-                    </div>
-                  </div>
-                </td>
-                <td style="color: var(--text-secondary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                  {track.artist || 'Unknown Artist'}
-                </td>
-                <td style="color: var(--text-secondary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                  {track.album || 'Unknown Album'}
-                </td>
-                <td style="color: var(--text-secondary); text-align: right; font-family: monospace;">{formatDuration(track.duration)}</td>
-                <td>
-                  <div style="display: flex; justify-content: center;">
-                    <button 
-                      onclick={() => removeTrackFromPlaylist(track.id, track.title)} 
-                      class="btn" 
-                      style="background: transparent; border: none; color: var(--text-muted); padding: 0.25rem;"
-                      title="Remove from playlist"
-                    >
-                      <Trash2 size={16} class="hover:text-red-500" style="transition: color 0.2s;" />
-                    </button>
-                  </div>
-                </td>
+                <th style="width: 50px;"></th>
+                <th style="width: 80px; text-align: center;">Order</th>
+                <th>Title</th>
+                <th>Artist</th>
+                <th class="hide-mobile">Album</th>
+                <th style="width: 80px; text-align: right;">Length</th>
+                <th style="width: 100px; text-align: center;">Actions</th>
               </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {#each playlistTracks as track, index (track.id)}
+                <tr>
+                  <td>
+                    <button 
+                      onclick={() => onPlayTrack({ 
+                        id: track.id, 
+                        title: track.title || 'Unknown Title', 
+                        artist: track.artist || 'Unknown Artist',
+                        format: track.format,
+                        bitrate: track.bitrate
+                      }, playlistTracks.map(t => ({
+                        id: t.id,
+                        title: t.title || 'Unknown Title',
+                        artist: t.artist || 'Unknown Artist',
+                        format: t.format,
+                        bitrate: t.bitrate
+                      })))} 
+                      class="btn" 
+                      style="background: rgba(255,255,255,0.04); border: 1px solid var(--border-color); border-radius: 50%; width: 32px; height: 32px; padding: 0; display: flex; align-items: center; justify-content: center; color: var(--text-primary);"
+                    >
+                      {#if currentPlayingId === track.id && isPlaying}
+                        <Pause size={14} fill="currentColor" />
+                      {:else}
+                        <Play size={14} fill="currentColor" style="margin-left: 2px;" />
+                      {/if}
+                    </button>
+                  </td>
+                  <td>
+                    <div style="display: flex; justify-content: center; align-items: center; gap: 0.25rem;">
+                      <button 
+                        onclick={() => moveTrack(index, 'up')} 
+                        class="btn move-btn" 
+                        disabled={index === 0}
+                        title="Move Up"
+                      >
+                        <ArrowUp size={12} />
+                      </button>
+                      <button 
+                        onclick={() => moveTrack(index, 'down')} 
+                        class="btn move-btn" 
+                        disabled={index === playlistTracks.length - 1}
+                        title="Move Down"
+                      >
+                        <ArrowDown size={12} />
+                      </button>
+                    </div>
+                  </td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 0.75rem; font-weight: 500; color: var(--text-primary);">
+                      <div class="track-thumbnail">
+                        <img 
+                          src="/api/tracks/{track.id}/cover?token={token}" 
+                          alt="" 
+                          onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                        />
+                        <Music size={14} style="color: var(--text-muted);" />
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 0.2rem; min-width: 0;">
+                        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;">
+                          {track.title || 'Unknown Title'}
+                        </span>
+                        {#if track.genre}
+                          <span class="genre-tag">{track.genre}</span>
+                        {/if}
+                      </div>
+                    </div>
+                  </td>
+                  <td style="color: var(--text-secondary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    {track.artist || 'Unknown Artist'}
+                  </td>
+                  <td class="hide-mobile" style="color: var(--text-secondary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    {track.album || 'Unknown Album'}
+                  </td>
+                  <td style="color: var(--text-secondary); text-align: right; font-family: monospace;">{formatDuration(track.duration)}</td>
+                  <td>
+                    <div style="display: flex; justify-content: center;">
+                      <button 
+                        onclick={() => removeTrackFromPlaylist(track.id, track.title)} 
+                        class="btn" 
+                        style="background: transparent; border: none; color: var(--text-muted); padding: 0.25rem;"
+                        title="Remove from playlist"
+                      >
+                        <Trash2 size={16} class="hover:text-red-500" style="transition: color 0.2s;" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
     {/if}
   </div>
 {/if}

@@ -228,3 +228,130 @@ pub async fn get_track_cover(
 
     StatusCode::NOT_FOUND.into_response()
 }
+
+pub async fn stream_track_subsonic(
+    _claims: Claims,
+    _headers: HeaderMap,
+    state: &AppState,
+    id: i64,
+    max_bitrate: Option<i32>,
+    target_format: Option<&str>,
+) -> Response {
+    let (path, format) = match sqlx::query("SELECT path, format FROM tracks WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+    {
+        Ok(Some(row)) => {
+            let path: String = row.get("path");
+            let format: Option<String> = row.get("format");
+            (path, format)
+        }
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    let stream_path = state.config.data_dir.join(&path);
+
+    // Determine if transcoding is requested
+    let mut needs_transcode = false;
+    let mut codec_name = "libmp3lame";
+    let mut mux_format = "mp3";
+    let mut mime_type = "audio/mpeg";
+
+    let req_format = target_format.map(|f| f.to_lowercase());
+    let current_format = format.as_deref().map(|f| f.to_lowercase());
+
+    if let Some(ref target) = req_format {
+        if current_format.as_ref() != Some(target) {
+            needs_transcode = true;
+            match target.as_str() {
+                "opus" | "ogg" => {
+                    codec_name = "libopus";
+                    mux_format = "ogg";
+                    mime_type = "audio/ogg";
+                }
+                "aac" | "m4a" => {
+                    codec_name = "aac";
+                    mux_format = "adts";
+                    mime_type = "audio/aac";
+                }
+                _ => {
+                    codec_name = "libmp3lame";
+                    mux_format = "mp3";
+                    mime_type = "audio/mpeg";
+                }
+            }
+        }
+    }
+
+    let requested_bitrate_bps = max_bitrate.unwrap_or(0) * 1000;
+    if requested_bitrate_bps > 0 {
+        needs_transcode = true;
+    } else if current_format == Some("flac".to_string()) || current_format == Some("alac".to_string()) {
+        needs_transcode = true;
+    }
+
+    if needs_transcode && state.has_ffmpeg {
+        let bitrate_str = if requested_bitrate_bps > 0 {
+            format!("{}k", max_bitrate.unwrap())
+        } else {
+            "320k".to_string()
+        };
+
+        tracing::info!("On-the-fly Subsonic transcoding track {} using ffmpeg with target bitrate {} and format {}...", id, bitrate_str, mux_format);
+
+        let status = tokio::process::Command::new("ffmpeg")
+            .args(&[
+                "-y",
+                "-i", &stream_path.to_string_lossy(),
+                "-codec:a", codec_name,
+                "-b:a", &bitrate_str,
+                "-f", mux_format,
+                "pipe:1",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+
+        match status {
+            Ok(mut child) => {
+                if let Some(stdout) = child.stdout.take() {
+                    let stream = ReaderStream::new(stdout);
+                    let body = Body::from_stream(stream);
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, mime_type)
+                        .header(header::ACCEPT_RANGES, "none")
+                        .body(body)
+                        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to spawn ffmpeg: {}", e);
+            }
+        }
+    }
+
+    // Direct stream fallback
+    let file = match File::open(&stream_path).await {
+        Ok(f) => f,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    let file_size = match file.metadata().await {
+        Ok(m) => m.len(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    let mime_type = mime_for_format(format.as_deref());
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_LENGTH, file_size)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_TYPE, mime_type)
+        .body(body)
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
