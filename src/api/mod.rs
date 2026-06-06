@@ -73,6 +73,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/profile", put(auth::update_profile))
         .route("/api/admin/users", get(users::list_users).post(users::create_user))
         .route("/api/admin/users/:id", put(users::update_user).delete(users::delete_user))
+        .route("/api/admin/stats", get(users::admin_stats))
         .route("/api/admin/tunnel", get(tunnel::get_tunnel_info).put(tunnel::update_tunnel_config))
         .route("/api/admin/tunnel/toggle", post(tunnel::toggle_tunnel))
         .route("/rest/ping.view", get(subsonic::ping).post(subsonic::ping))
@@ -132,26 +133,29 @@ async fn health() -> &'static str {
 }
 
 async fn stats(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
 ) -> Result<Json<StatsResponse>, (StatusCode, String)> {
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let total_tracks: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM tracks")
-        .fetch_one(&state.pool)
+        .fetch_one(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let total_albums: i32 = sqlx::query_scalar("SELECT COUNT(*) FROM albums")
-        .fetch_one(&state.pool)
+        .fetch_one(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let total_artists: i32 = sqlx::query_scalar("SELECT COUNT(DISTINCT artist) FROM tracks")
-        .fetch_one(&state.pool)
+        .fetch_one(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let total_size_bytes: i64 = sqlx::query_scalar::<_, Option<i64>>("SELECT SUM(size) FROM tracks")
-        .fetch_one(&state.pool)
+        .fetch_one(&user_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .unwrap_or(0);

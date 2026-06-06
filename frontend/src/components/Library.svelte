@@ -521,7 +521,7 @@
           {/each}
         </div>
       {:else}
-        {#if role === 'Admin' && tracks.length > 0 && selectedTrackIds.length === 0}
+        {#if role !== 'StreamOnly' && tracks.length > 0 && selectedTrackIds.length === 0}
           <div class="bulk-hint" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; margin-bottom: 1rem; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 8px; font-size: 0.8rem; color: var(--text-muted);">
             <AlertCircle size={14} />
             <span>Select tracks using the checkboxes to perform bulk actions like metadata fetching, playlist adding, or deletion.</span>
@@ -531,7 +531,7 @@
           <table class="library-table" style="font-size: 0.95rem;">
             <thead>
               <tr>
-                {#if role === 'Admin'}
+                {#if role !== 'StreamOnly'}
                 <th style="width: 40px; text-align: center; vertical-align: middle;">
                   <input 
                     type="checkbox" 
@@ -553,7 +553,7 @@
             <tbody>
               {#each tracks as track (track.id)}
                 <tr>
-                  {#if role === 'Admin'}
+                  {#if role !== 'StreamOnly'}
                   <td style="text-align: center; vertical-align: middle;">
                     <input 
                       type="checkbox" 
@@ -663,7 +663,7 @@
                       </div>
                       {/if}
   
-                      {#if role === 'Admin'}
+                      {#if role !== 'StreamOnly'}
                       <button 
                         onclick={() => openEditModal(track)} 
                         class="btn" 

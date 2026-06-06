@@ -832,7 +832,7 @@
           <span class="nav-text">Dashboard</span>
         </button>
 
-        {#if role === 'Admin'}
+        {#if role !== 'StreamOnly'}
         <button 
           onclick={() => { activeTab = 'upload'; sidebarOpen = false; }} 
           class="nav-item {activeTab === 'upload' ? 'active' : ''}"
@@ -961,9 +961,9 @@
       </div>
       {#if activeTab === 'dashboard'}
         <Dashboard {token} setActiveTab={(tab) => activeTab = tab} {addToast} />
-      {:else if activeTab === 'upload' && role === 'Admin'}
+      {:else if activeTab === 'upload' && role !== 'StreamOnly'}
         <Upload />
-      {:else if activeTab === 'library' && role === 'Admin'}
+      {:else if activeTab === 'library' && role !== 'StreamOnly'}
         <Library 
           {token} 
           {role}

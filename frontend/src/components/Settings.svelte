@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Shield, Database, Key, HelpCircle, LogOut, RefreshCw, FolderSync, Trash2, User, Users, Cpu, FileText, CheckCircle2, AlertTriangle, Edit2, UserPlus, Check, X, Globe, Copy, ExternalLink, Lock } from '@lucide/svelte';
+  import { Shield, Database, Key, HelpCircle, LogOut, RefreshCw, FolderSync, Trash2, User, Users, Cpu, FileText, CheckCircle2, AlertTriangle, Edit2, UserPlus, Check, X, Globe, Copy, ExternalLink, Lock, Search } from '@lucide/svelte';
 
   // Props in Svelte 5
   let { token, username, role, listenbrainzToken, scanStatus, fetcherStatus, onLogout, addToast, onProfileUpdate } = $props<{
@@ -22,6 +22,57 @@
   let newPassword = $state('');
   let confirmPassword = $state('');
   let isSavingProfile = $state(false);
+
+  // User search and stats state
+  let userSearchQuery = $state('');
+  let filteredUsers = $derived(
+    usersList.filter(u => 
+      u.username.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+      (u.role || '').toLowerCase().includes(userSearchQuery.toLowerCase())
+    )
+  );
+
+  let adminStats = $state<any[]>([]);
+  let isLoadingAdminStats = $state(false);
+
+  async function fetchAdminStats() {
+    if (role !== 'Admin') return;
+    isLoadingAdminStats = true;
+    try {
+      const res = await fetch('/api/admin/stats', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        adminStats = await res.json();
+      }
+    } catch (e) {
+      console.error('Failed to fetch admin stats', e);
+    } finally {
+      isLoadingAdminStats = false;
+    }
+  }
+
+  function formatDateTime(dateTimeStr: string | null | undefined): string {
+    if (!dateTimeStr) return 'Unknown';
+    try {
+      const parts = dateTimeStr.split(' ');
+      if (parts.length > 0) {
+        return parts[0];
+      }
+      return dateTimeStr;
+    } catch (e) {
+      return dateTimeStr;
+    }
+  }
+
+  function formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
 
   // Library Wiping Safeguards
   let resetCheck = $state(false);
@@ -367,6 +418,12 @@
     }
   });
 
+  $effect(() => {
+    if (activeTab === 'system' && role === 'Admin') {
+      fetchAdminStats();
+    }
+  });
+
   // Public Access Tunnel States & Handlers
   let tunnelConfig = $state<{ provider: 'localhost.run' | 'ngrok' | 'cloudflare'; token: string; custom_domain: string; enabled: boolean }>({
     provider: 'localhost.run',
@@ -531,7 +588,7 @@
         <Users size={16} /> User Management
       </button>
     {/if}
-    {#if role === 'Admin'}
+    {#if role !== 'StreamOnly'}
     <button 
       onclick={() => activeTab = 'library'} 
       class="tab-btn {activeTab === 'library' ? 'active' : ''}"
@@ -768,15 +825,27 @@
         </div>
       {/if}
 
+      <!-- User Search filter bar -->
+      <div class="glass-card" style="padding: 1rem; display: flex; align-items: center; gap: 0.5rem; position: relative;">
+        <Search size={18} style="position: absolute; left: 1.75rem; color: var(--text-secondary);" />
+        <input 
+          type="text" 
+          class="form-input" 
+          placeholder="Search users by username or role..." 
+          style="width: 100%; padding-left: 2.75rem;" 
+          bind:value={userSearchQuery}
+        />
+      </div>
+
       <div class="glass-card" style="padding: 1.5rem;">
         {#if isLoadingUsers}
           <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
             <RefreshCw size={24} class="animate-spin" style="animation: spin 1s linear infinite; margin: 0 auto 1rem;" />
             <span>Loading user list...</span>
           </div>
-        {:else if usersList.length === 0}
+        {:else if filteredUsers.length === 0}
           <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
-            No users registered.
+            No matching users found.
           </div>
         {:else}
           <div style="overflow-x: auto;">
@@ -787,11 +856,12 @@
                   <th style="text-align: left; padding: 0.75rem;">Role</th>
                   <th style="text-align: left; padding: 0.75rem;">ListenBrainz Token</th>
                   <th style="text-align: left; padding: 0.75rem;">Status</th>
+                  <th style="text-align: left; padding: 0.75rem;">Created At</th>
                   <th style="text-align: right; padding: 0.75rem;">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {#each usersList as u}
+                {#each filteredUsers as u}
                   <tr>
                     <td style="padding: 0.75rem; vertical-align: middle;">
                       {#if editingUserId === u.id}
@@ -807,8 +877,12 @@
                           <option value="User">User</option>
                           <option value="StreamOnly">StreamOnly</option>
                         </select>
+                      {:else if u.role === 'Admin'}
+                        <span style="font-size: 0.75rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; letter-spacing: 0.05em;">Admin</span>
+                      {:else if u.role === 'User'}
+                        <span style="font-size: 0.75rem; text-transform: uppercase; background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; letter-spacing: 0.05em;">User</span>
                       {:else}
-                        <span style="font-size: 0.8rem; text-transform: uppercase; background: rgba(255,255,255,0.06); padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid var(--border-color); color: var(--text-secondary);">{u.role}</span>
+                        <span style="font-size: 0.75rem; text-transform: uppercase; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; letter-spacing: 0.05em;">StreamOnly</span>
                       {/if}
                     </td>
                     <td style="padding: 0.75rem; vertical-align: middle;">
@@ -832,23 +906,26 @@
                         <span style="color: var(--danger); font-weight: 500;">Disabled</span>
                       {/if}
                     </td>
+                    <td style="padding: 0.75rem; vertical-align: middle; color: var(--text-secondary); font-family: monospace; font-size: 0.85rem;">
+                      {formatDateTime(u.created_at)}
+                    </td>
                     <td style="padding: 0.75rem; text-align: right; vertical-align: middle;">
                       {#if editingUserId === u.id}
                         <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
-                          <button onclick={() => handleUpdateUser(u.id)} class="btn btn-primary" style="padding: 0.35rem 0.5rem; font-size: 0.8rem;" disabled={isUpdating}>
+                          <button onclick={() => handleUpdateUser(u.id)} class="btn btn-primary" style="padding: 0.35rem 0.5rem; font-size: 0.85rem;" disabled={isUpdating}>
                             Save
                           </button>
-                          <button onclick={() => editingUserId = null} class="btn btn-secondary" style="padding: 0.35rem 0.5rem; font-size: 0.8rem;">
+                          <button onclick={() => editingUserId = null} class="btn btn-secondary" style="padding: 0.35rem 0.5rem; font-size: 0.85rem;">
                             Cancel
                           </button>
                         </div>
                       {:else}
                         <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
-                          <button onclick={() => startEditing(u)} class="btn btn-secondary" style="padding: 0.35rem 0.5rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.25rem;">
+                          <button onclick={() => startEditing(u)} class="btn btn-secondary" style="padding: 0.35rem 0.5rem; font-size: 0.85rem; display: flex; align-items: center; gap: 0.25rem;">
                             <Edit2 size={12} /> Edit
                           </button>
                           {#if u.username !== username}
-                            <button onclick={() => handleDeleteUser(u.id, u.username)} class="btn btn-danger" style="padding: 0.35rem 0.5rem; font-size: 0.8rem;">
+                            <button onclick={() => handleDeleteUser(u.id, u.username)} class="btn btn-danger" style="padding: 0.35rem 0.5rem; font-size: 0.85rem;">
                               Delete
                             </button>
                           {/if}
@@ -865,8 +942,9 @@
     </div>
 
   <!-- Library Management Tab -->
-  {:else if activeTab === 'library' && role === 'Admin'}
+  {:else if activeTab === 'library'}
     <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+
       
       <!-- Scan Music Folder -->
       <div class="glass-card" style="padding: 1.5rem;">
@@ -1263,6 +1341,62 @@
   <!-- System Info Tab -->
   {:else if activeTab === 'system'}
     <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+      {#if role === 'Admin'}
+        <div class="glass-card" style="padding: 1.5rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <Users size={20} style="color: var(--accent);" />
+              <h3 style="font-family: var(--font-heading); font-size: 1.15rem; font-weight: 600; margin: 0;">User Storage & Library Stats</h3>
+            </div>
+            <button onclick={fetchAdminStats} class="btn btn-secondary" style="display: flex; gap: 0.4rem; align-items: center; padding: 0.4rem 0.75rem; font-size: 0.8rem;" disabled={isLoadingAdminStats}>
+              <RefreshCw size={14} class={isLoadingAdminStats ? 'animate-spin' : ''} style={isLoadingAdminStats ? 'animation: spin 1s linear infinite;' : ''} /> Refresh Stats
+            </button>
+          </div>
+
+          {#if isLoadingAdminStats && adminStats.length === 0}
+            <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+              <RefreshCw size={24} class="animate-spin" style="animation: spin 1s linear infinite; margin: 0 auto 1rem;" />
+              <span>Fetching user stats...</span>
+            </div>
+          {:else if adminStats.length === 0}
+            <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+              No user stats available.
+            </div>
+          {:else}
+            <div style="overflow-x: auto;">
+              <table class="library-table" style="width: 100%; font-size: 0.9rem; border-top: 1px solid var(--border-color);">
+                <thead>
+                  <tr>
+                    <th style="text-align: left; padding: 0.75rem;">Username</th>
+                    <th style="text-align: left; padding: 0.75rem;">Role</th>
+                    <th style="text-align: right; padding: 0.75rem;">Total Tracks</th>
+                    <th style="text-align: right; padding: 0.75rem;">Storage Used</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each adminStats as stat}
+                    <tr>
+                      <td style="padding: 0.75rem; font-weight: 600; color: var(--text-primary);">{stat.username}</td>
+                      <td style="padding: 0.75rem;">
+                        {#if stat.role === 'Admin'}
+                          <span style="font-size: 0.7rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.2); padding: 0.1rem 0.35rem; border-radius: 4px; font-weight: 600;">Admin</span>
+                        {:else if stat.role === 'User'}
+                          <span style="font-size: 0.7rem; text-transform: uppercase; background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.2); padding: 0.1rem 0.35rem; border-radius: 4px; font-weight: 600;">User</span>
+                        {:else}
+                          <span style="font-size: 0.7rem; text-transform: uppercase; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.2); padding: 0.1rem 0.35rem; border-radius: 4px; font-weight: 600;">StreamOnly</span>
+                        {/if}
+                      </td>
+                      <td style="padding: 0.75rem; text-align: right; font-family: monospace;">{stat.track_count}</td>
+                      <td style="padding: 0.75rem; text-align: right; font-family: monospace;">{formatBytes(stat.total_size_bytes)}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       <div class="glass-card" style="padding: 1.5rem;">
         <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.25rem;">
           <Database size={20} style="color: var(--accent);" />

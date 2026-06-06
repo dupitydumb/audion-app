@@ -282,3 +282,62 @@ pub async fn delete_user(
 
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[derive(Serialize)]
+pub struct AdminUserStats {
+    pub user_id: String,
+    pub username: String,
+    pub role: String,
+    pub track_count: i64,
+    pub total_size_bytes: i64,
+}
+
+pub async fn admin_stats(
+    claims: Claims,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<AdminUserStats>>, (StatusCode, String)> {
+    require_admin(&claims).map_err(|(s, m)| (s, m.to_string()))?;
+
+    // Fetch all users from the system pool
+    let users = sqlx::query("SELECT id, username, role FROM users ORDER BY username ASC")
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut stats = Vec::new();
+    use sqlx::Row;
+
+    for row in users {
+        let user_id: String = row.try_get("id").unwrap_or_default();
+        let username: String = row.try_get("username").unwrap_or_default();
+        let role: String = row.try_get("role").unwrap_or_else(|_| "User".to_string());
+
+        let (track_count, total_size_bytes) = match state.get_user_pool(&user_id).await {
+            Ok(user_pool) => {
+                match sqlx::query("SELECT COUNT(*), SUM(size) FROM tracks")
+                    .fetch_one(&user_pool)
+                    .await
+                {
+                    Ok(r) => {
+                        let count: i64 = r.try_get(0).unwrap_or(0);
+                        let sum: Option<i64> = r.try_get(1).unwrap_or(None);
+                        (count, sum.unwrap_or(0))
+                    }
+                    Err(_) => (0, 0),
+                }
+            }
+            Err(_) => (0, 0),
+        };
+
+        stats.push(AdminUserStats {
+            user_id,
+            username,
+            role,
+            track_count,
+            total_size_bytes,
+        });
+    }
+
+    Ok(Json(stats))
+}
+
