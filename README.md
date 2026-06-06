@@ -52,6 +52,9 @@ Audion Server is configured using environment variables. When starting, the back
 | `AUDION_JWT_SECRET` | Secret key used for signing JWT tokens | `your-secret-key-here-super-secure` |
 | `AUDION_DATA_DIR` | Directory where SQLite database, tracks, and artwork are stored | `./data` |
 | `AUDION_PUBLIC_DIR` | Directory containing built frontend static files (for single-binary mode) | `./frontend/dist` |
+| `AUDION_JWT_EXPIRATION_DAYS` | Number of days before a issued JWT token expires | `7` |
+| `AUDION_CORS_ORIGIN` | CORS allowed origins (e.g. `*` or a specific URL) | `*` |
+| `AUDION_MAX_BODY_SIZE` | Maximum allowed request body size in bytes (e.g. for uploads) | `262144000` (250MB) |
 | `RUST_LOG` | Backend logging level (`trace`, `debug`, `info`, `warn`, `error`) | `info` |
 
 ---
@@ -105,6 +108,15 @@ Audion Server comes with a preconfigured `docker-compose.yml` for multi-containe
 
 3.  **Access the Application**
     Open your browser and navigate to `http://localhost`. Log in using your configured administrator credentials.
+
+> [!TIP]
+> **Permission Issues with Database Writes (SQLite Error Code 8)**
+> If you encounter a `500 Internal Server Error` with `attempt to write a readonly database` when performing writes (e.g., toggling liked tracks, creating playlists), it means the SQLite database files or subdirectories under `/data` are owned by `root` instead of the non-root `audion` user (UID 10001) that the server runs as.
+>
+> You can fix this by running the following command to correct ownership in the running container:
+> ```bash
+> docker exec -u root audion-server-docker-audion-server-1 chown -R audion:audion /data
+> ```
 
 ---
 

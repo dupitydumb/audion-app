@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     sqlite3 \
     ffmpeg \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy compiled binary from builder
@@ -48,6 +49,13 @@ EXPOSE 8080
 ENV AUDION_DATA_DIR=/data
 ENV AUDION_PORT=8080
 ENV RUST_LOG=info
+ENV AUDION_ADMIN_USER=admin
+ENV AUDION_ADMIN_PASSWORD=changeme
+ENV AUDION_JWT_SECRET=your-secret-key-here-change-this-in-production
+ENV AUDION_JWT_EXPIRATION_DAYS=7
+ENV AUDION_CORS_ORIGIN=*
+ENV AUDION_MAX_BODY_SIZE=262144000
+ENV AUDION_PUBLIC_DIR=/app/frontend/dist
 
 # Define data volume
 VOLUME /data
@@ -59,7 +67,11 @@ RUN groupadd -g 10001 audion && \
 # Ensure directories exist and have proper ownership
 RUN mkdir -p /data && chown -R audion:audion /app /data
 
-# Run application as non-root user
-USER audion
-CMD ["/app/audion-server"]
+# Copy entrypoint script and make it executable
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# The entrypoint will start as root, fix permissions, and then run as 'audion'
+ENTRYPOINT ["/app/entrypoint.sh"]
+
 
