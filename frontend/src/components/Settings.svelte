@@ -1327,19 +1327,25 @@
   }
 
   .settings-container {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
     width: 100%;
-    max-width: 800px;
+    max-width: 1200px;
   }
 
   .settings-tabs {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.35rem;
+    overflow-x: auto;
     border-bottom: 1px solid var(--border-color);
     padding-bottom: 0.5rem;
     width: 100%;
+    scrollbar-width: none;
+  }
+
+  .settings-tabs::-webkit-scrollbar {
+    display: none;
   }
 
   .tab-btn {
@@ -1354,6 +1360,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    white-space: nowrap;
     transition: all 0.2s ease;
   }
 
@@ -1366,6 +1373,29 @@
     background: rgba(168, 85, 247, 0.1);
     color: var(--accent);
     font-weight: 600;
+  }
+
+  @media (min-width: 768px) {
+    .settings-container {
+      grid-template-columns: 220px 1fr;
+      gap: 2rem;
+    }
+
+    .settings-tabs {
+      flex-direction: column;
+      border-bottom: none;
+      border-right: 1px solid var(--border-color);
+      padding-bottom: 0;
+      padding-right: 1.5rem;
+      overflow-x: visible;
+      height: fit-content;
+    }
+
+    .tab-btn {
+      width: 100%;
+      justify-content: flex-start;
+      padding: 0.75rem 1rem;
+    }
   }
 
   .console-box {
