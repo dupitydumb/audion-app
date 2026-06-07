@@ -246,5 +246,41 @@ impl AppState {
         }
         None
     }
+
+    pub async fn find_artwork_path_for_user(&self, user_id: &str, album_id: i64) -> Option<String> {
+        use sqlx::Row;
+        if let Ok(pool) = self.get_user_pool(user_id).await {
+            let res = sqlx::query("SELECT art_path FROM albums WHERE id = ?")
+                .bind(album_id)
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten();
+            if let Some(row) = res {
+                if let Some(art_path) = row.get::<Option<String>, _>("art_path") {
+                    return Some(art_path);
+                }
+            }
+        }
+        None
+    }
+
+    pub async fn find_track_cover_path_for_user(&self, user_id: &str, track_id: i64) -> Option<String> {
+        use sqlx::Row;
+        if let Ok(pool) = self.get_user_pool(user_id).await {
+            let res = sqlx::query("SELECT track_cover_path FROM tracks WHERE id = ?")
+                .bind(track_id)
+                .fetch_optional(&pool)
+                .await
+                .ok()
+                .flatten();
+            if let Some(row) = res {
+                if let Some(cover_path) = row.get::<Option<String>, _>("track_cover_path") {
+                    return Some(cover_path);
+                }
+            }
+        }
+        None
+    }
 }
 

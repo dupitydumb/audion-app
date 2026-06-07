@@ -205,11 +205,16 @@ pub async fn stream_track(
 }
 
 pub async fn get_track_cover(
-    _claims: Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let cover_path = state.find_track_cover_path(id).await;
+    let cover_path = state.find_track_cover_path_for_user(&claims.sub, id).await;
+
+    let cover_path = match cover_path {
+        Some(path) => Some(path),
+        None => state.find_track_cover_path(id).await,
+    };
 
     if let Some(ref path) = cover_path {
         let full_path = state.config.data_dir.join(path);

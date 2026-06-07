@@ -89,10 +89,20 @@ pub async fn get_album_tracks(
 }
 
 pub async fn get_album_artwork(
+    claims: Option<Claims>,
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let art_path = state.find_artwork_path(id).await;
+    let art_path = if let Some(ref c) = claims {
+        state.find_artwork_path_for_user(&c.sub, id).await
+    } else {
+        None
+    };
+
+    let art_path = match art_path {
+        Some(path) => Some(path),
+        None => state.find_artwork_path(id).await,
+    };
 
     if let Some(ref path) = art_path {
         let full_path = state.config.data_dir.join(path);
