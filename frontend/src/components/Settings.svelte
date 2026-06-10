@@ -14,7 +14,7 @@
     onProfileUpdate: (newToken: string, newUsername: string, newRole: string, newLbToken: string) => void;
   }>();
 
-  let activeTab = $state<'profile' | 'users' | 'library' | 'tunnel' | 'system'>('profile');
+  let activeTab = $state<'profile' | 'users' | 'library' | 'tunnel' | 'system' | 'storage'>('profile');
 
   // Profile Form States
   let currentPassword = $state('');
@@ -561,8 +561,93 @@
       }
     }
     return () => {
-      if (pollInterval) clearInterval(pollInterval);
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
     };
+  });
+
+  // Storage Settings State & Handlers
+  let storageConfig = $state({
+    storage_type: 'local',
+    s3_endpoint: '',
+    s3_bucket: '',
+    s3_access_key: '',
+    s3_secret_key: '',
+    s3_region: '',
+    s3_force_path_style: false
+  });
+  let isTestingStorage = $state(false);
+  let isSavingStorage = $state(false);
+
+  async function fetchStorageConfig() {
+    try {
+      const res = await fetch('/api/admin/storage', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        storageConfig = await res.json();
+      }
+    } catch (e) {
+      console.error('Failed to fetch storage configuration', e);
+    }
+  }
+
+  async function handleTestStorageConnection() {
+    isTestingStorage = true;
+    try {
+      const res = await fetch('/api/admin/storage?test_only=true', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(storageConfig)
+      });
+      if (res.ok) {
+        addToast('S3 storage connection test succeeded!', 'success');
+      } else {
+        const text = await res.text();
+        throw new Error(text || 'Connection test failed');
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Connection test failed', 'error');
+    } finally {
+      isTestingStorage = false;
+    }
+  }
+
+  async function handleSaveStorageConfig(e: SubmitEvent) {
+    e.preventDefault();
+    isSavingStorage = true;
+    try {
+      const res = await fetch('/api/admin/storage', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(storageConfig)
+      });
+      if (res.ok) {
+        addToast('Storage settings updated successfully!', 'success');
+        fetchStorageConfig();
+      } else {
+        const text = await res.text();
+        throw new Error(text || 'Failed to update storage settings');
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Failed to update storage settings', 'error');
+    } finally {
+      isSavingStorage = false;
+    }
+  }
+
+  $effect(() => {
+    if (activeTab === 'storage' && role === 'Admin') {
+      fetchStorageConfig();
+    }
   });
 </script>
 
@@ -586,6 +671,12 @@
         class="tab-btn {activeTab === 'users' ? 'active' : ''}"
       >
         <Users size={16} /> User Management
+      </button>
+      <button 
+        onclick={() => activeTab = 'storage'} 
+        class="tab-btn {activeTab === 'storage' ? 'active' : ''}"
+      >
+        <Database size={16} /> Storage Settings
       </button>
     {/if}
     {#if role !== 'StreamOnly'}
@@ -1336,6 +1427,156 @@
         </form>
       </div>
 
+    </div>
+
+  <!-- Storage Settings Tab -->
+  {:else if activeTab === 'storage' && role === 'Admin'}
+    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+      <div class="glass-card" style="padding: 1.5rem;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+          <Database size={20} style="color: var(--accent);" />
+          <h3 style="font-family: var(--font-heading); font-size: 1.15rem; font-weight: 600;">Media Storage Configuration</h3>
+        </div>
+
+        <form onsubmit={handleSaveStorageConfig}>
+          <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+            
+            <div class="form-group">
+              <label class="form-label" for="storage-type">Storage Backend</label>
+              <select 
+                id="storage-type" 
+                class="form-input" 
+                bind:value={storageConfig.storage_type}
+                style="width: 100%; height: auto; padding: 0.5rem 0.75rem;"
+              >
+                <option value="local">Local Host File System (Default)</option>
+                <option value="s3">S3-Compatible Object Storage (AWS, MinIO, Cloudflare R2, etc.)</option>
+              </select>
+            </div>
+
+            {#if storageConfig.storage_type === 'local'}
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 1rem; border-radius: 6px; font-size: 0.85rem; line-height: 1.4; color: var(--text-secondary);">
+                <strong>Local Storage Active:</strong> All uploaded audio tracks and metadata images will be written to the host container's local directory: <code style="background: rgba(0,0,0,0.25); padding: 0.1rem 0.3rem;">./data/</code>.
+              </div>
+            {/if}
+
+            {#if storageConfig.storage_type === 's3'}
+              <div style="display: flex; flex-direction: column; gap: 1rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 1rem;">
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+                  <div class="form-group">
+                    <label class="form-label" for="s3-endpoint">Endpoint URL</label>
+                    <input 
+                      type="text" 
+                      id="s3-endpoint" 
+                      class="form-input" 
+                      style="width: 100%;" 
+                      placeholder="https://s3.amazonaws.com (or custom provider URL)" 
+                      bind:value={storageConfig.s3_endpoint}
+                    />
+                  </div>
+
+                  <div class="form-group">
+                    <label class="form-label" for="s3-bucket">Bucket Name <span style="color: var(--danger);">*</span></label>
+                    <input 
+                      type="text" 
+                      id="s3-bucket" 
+                      class="form-input" 
+                      style="width: 100%;" 
+                      placeholder="my-music-bucket" 
+                      bind:value={storageConfig.s3_bucket}
+                      required={storageConfig.storage_type === 's3'}
+                    />
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+                  <div class="form-group">
+                    <label class="form-label" for="s3-access-key">Access Key</label>
+                    <input 
+                      type="text" 
+                      id="s3-access-key" 
+                      class="form-input" 
+                      style="width: 100%;" 
+                      placeholder="S3 access key" 
+                      bind:value={storageConfig.s3_access_key}
+                    />
+                  </div>
+
+                  <div class="form-group">
+                    <label class="form-label" for="s3-secret-key">Secret Key</label>
+                    <input 
+                      type="password" 
+                      id="s3-secret-key" 
+                      class="form-input" 
+                      style="width: 100%;" 
+                      placeholder={storageConfig.s3_secret_key ? "********" : "S3 secret key"}
+                      bind:value={storageConfig.s3_secret_key}
+                    />
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+                  <div class="form-group">
+                    <label class="form-label" for="s3-region">Region</label>
+                    <input 
+                      type="text" 
+                      id="s3-region" 
+                      class="form-input" 
+                      style="width: 100%;" 
+                      placeholder="us-east-1" 
+                      bind:value={storageConfig.s3_region}
+                    />
+                  </div>
+
+                  <div class="form-group" style="display: flex; align-items: center; margin-top: 1.75rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.85rem; color: var(--text-secondary);">
+                      <input 
+                        type="checkbox" 
+                        bind:checked={storageConfig.s3_force_path_style} 
+                      />
+                      <span>Force Path-Style Access (Needed for MinIO / LocalStack)</span>
+                    </label>
+                  </div>
+                </div>
+
+              </div>
+            {/if}
+
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 1rem;">
+              {#if storageConfig.storage_type === 's3'}
+                <button 
+                  type="button" 
+                  onclick={handleTestStorageConnection} 
+                  class="btn btn-secondary" 
+                  style="display: flex; gap: 0.5rem; align-items: center;" 
+                  disabled={isTestingStorage || isSavingStorage}
+                >
+                  {#if isTestingStorage}
+                    <RefreshCw size={16} class="animate-spin" style="animation: spin 1s linear infinite;" /> Testing...
+                  {:else}
+                    Test Connection
+                  {/if}
+                </button>
+              {/if}
+
+              <button 
+                type="submit" 
+                class="btn btn-primary" 
+                style="display: flex; gap: 0.5rem; align-items: center;" 
+                disabled={isSavingStorage || isTestingStorage}
+              >
+                {#if isSavingStorage}
+                  <RefreshCw size={16} class="animate-spin" style="animation: spin 1s linear infinite;" /> Saving...
+                {:else}
+                  Save Settings
+                {/if}
+              </button>
+            </div>
+
+          </div>
+        </form>
+      </div>
     </div>
 
   <!-- System Info Tab -->

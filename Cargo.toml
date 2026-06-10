@@ -29,6 +29,9 @@ md5 = "0.7.0"
 notify = "6.1.1"
 hex = "0.4.3"
 aes-gcm = "0.10.3"
+aws-config = "1.5"
+aws-sdk-s3 = "1.37"
+
 
 
 

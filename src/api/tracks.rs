@@ -170,6 +170,32 @@ pub async fn upload_track(
         }
     }
 
+    // If S3 is active, upload track and delete local temp file
+    let upload_to_s3 = {
+        let storage = state.storage_backend.read().await;
+        if let crate::storage::StorageBackend::S3 { .. } = &*storage {
+            let content_type = match ext.to_lowercase().as_str() {
+                "mp3" => "audio/mpeg",
+                "flac" => "audio/flac",
+                "m4a" | "aac" | "alac" => "audio/mp4",
+                "ogg" => "audio/ogg",
+                "wav" => "audio/wav",
+                _ => "application/octet-stream",
+            };
+            storage.put_object(&relative_path, file_bytes.clone(), content_type).await
+                .map_err(|e| {
+                    let _ = std::fs::remove_file(&full_path);
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to upload track to S3: {}", e))
+                })?;
+            true
+        } else {
+            false
+        }
+    };
+    if upload_to_s3 {
+        let _ = std::fs::remove_file(&full_path);
+    }
+
     // Get or Create Album
     let album_id = if let Some(album_name) = &metadata.album {
         let existing_album = sqlx::query("SELECT id FROM albums WHERE name = ?")
@@ -230,8 +256,19 @@ pub async fn upload_track(
     // Save track cover if present
     if let Some(cover_data) = &metadata.track_cover {
         let relative_cover = format!("users/{}/artwork/track_{}.jpg", claims.sub, track_id);
-        let cover_full = state.config.data_dir.join(&relative_cover);
-        if std::fs::write(&cover_full, cover_data).is_ok() {
+        let write_success = {
+            let storage = state.storage_backend.read().await;
+            match &*storage {
+                crate::storage::StorageBackend::Local { .. } => {
+                    let cover_full = state.config.data_dir.join(&relative_cover);
+                    std::fs::write(&cover_full, cover_data).is_ok()
+                }
+                crate::storage::StorageBackend::S3 { .. } => {
+                    storage.put_object(&relative_cover, cover_data.clone(), "image/jpeg").await.is_ok()
+                }
+            }
+        };
+        if write_success {
             sqlx::query("UPDATE tracks SET track_cover_path = ? WHERE id = ?")
                 .bind(&relative_cover)
                 .bind(track_id)
@@ -253,8 +290,19 @@ pub async fn upload_track(
 
             if !has_art {
                 let relative_art = format!("users/{}/artwork/album_{}.jpg", claims.sub, alb_id);
-                let art_full = state.config.data_dir.join(&relative_art);
-                if std::fs::write(&art_full, art_data).is_ok() {
+                let write_success = {
+                    let storage = state.storage_backend.read().await;
+                    match &*storage {
+                        crate::storage::StorageBackend::Local { .. } => {
+                            let art_full = state.config.data_dir.join(&relative_art);
+                            std::fs::write(&art_full, art_data).is_ok()
+                        }
+                        crate::storage::StorageBackend::S3 { .. } => {
+                            storage.put_object(&relative_art, art_data.clone(), "image/jpeg").await.is_ok()
+                        }
+                    }
+                };
+                if write_success {
                     sqlx::query("UPDATE albums SET art_path = ? WHERE id = ?")
                         .bind(&relative_art)
                         .bind(alb_id)
@@ -323,14 +371,27 @@ pub async fn delete_track_inner(
     let cover_path_val = track.get::<Option<String>, _>("track_cover_path");
 
     // Delete files
-    let full_track_path = state.config.data_dir.join(&path_val);
-    if full_track_path.exists() {
-        let _ = std::fs::remove_file(full_track_path);
-    }
-    if let Some(ref cover_path) = cover_path_val {
-        let full_cover_path = state.config.data_dir.join(cover_path);
-        if full_cover_path.exists() {
-            let _ = std::fs::remove_file(full_cover_path);
+    {
+        let storage = state.storage_backend.read().await;
+        match &*storage {
+            crate::storage::StorageBackend::Local { .. } => {
+                let full_track_path = state.config.data_dir.join(&path_val);
+                if full_track_path.exists() {
+                    let _ = std::fs::remove_file(full_track_path);
+                }
+                if let Some(ref cover_path) = cover_path_val {
+                    let full_cover_path = state.config.data_dir.join(cover_path);
+                    if full_cover_path.exists() {
+                        let _ = std::fs::remove_file(full_cover_path);
+                    }
+                }
+            }
+            crate::storage::StorageBackend::S3 { .. } => {
+                let _ = storage.delete_object(&path_val).await;
+                if let Some(ref cover_path) = cover_path_val {
+                    let _ = storage.delete_object(cover_path).await;
+                }
+            }
         }
     }
     let transcoded_path = state.config.data_dir.join("transcoded").join(format!("{}.mp3", id));

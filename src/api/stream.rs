@@ -85,10 +85,30 @@ pub async fn stream_track(
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
 
+    let storage = state.storage_backend.read().await;
+    let is_s3 = matches!(&*storage, crate::storage::StorageBackend::S3 { .. });
+    let needs_transcode = format.as_deref().map(|f| f.to_lowercase()) == Some("flac".to_string()) && state.has_ffmpeg;
+
+    if is_s3 && !needs_transcode {
+        match storage.get_presigned_url(&path, 3600).await {
+            Ok(url) => {
+                return Response::builder()
+                    .status(StatusCode::FOUND)
+                    .header(header::LOCATION, url)
+                    .body(Body::empty())
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+            }
+            Err(e) => {
+                tracing::error!("Failed to generate presigned URL: {}", e);
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        }
+    }
+
     let mut stream_path = state.config.data_dir.join(&path);
     let mut mime_type = mime_for_format(format.as_deref());
 
-    if format.as_deref().map(|f| f.to_lowercase()) == Some("flac".to_string()) && state.has_ffmpeg {
+    if needs_transcode {
         let cache_dir = state.config.data_dir.join("transcoded");
         if std::fs::create_dir_all(&cache_dir).is_ok() {
             let cache_path = cache_dir.join(format!("{}.mp3", id));
@@ -106,37 +126,64 @@ pub async fn stream_track(
                 });
 
                 let temp_path = cache_dir.join(format!("{}.temp.mp3", id));
-                let status = tokio::process::Command::new("ffmpeg")
-                    .args(&[
-                        "-y",
-                        "-i", &stream_path.to_string_lossy(),
-                        "-codec:a", "libmp3lame",
-                        "-b:a", "320k",
-                        &temp_path.to_string_lossy(),
-                    ])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .await;
+                let temp_s3_input = cache_dir.join(format!("{}.s3_temp.flac", id));
+                
+                let mut prepared = true;
+                if is_s3 {
+                    match storage.get_object(&path).await {
+                        Ok(bytes) => {
+                            if let Err(e) = std::fs::write(&temp_s3_input, bytes) {
+                                tracing::error!("Failed to write S3 temp file: {}", e);
+                                prepared = false;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to download FLAC from S3: {}", e);
+                            prepared = false;
+                        }
+                    }
+                }
 
-                let rename_success = match status {
-                    Ok(s) if s.success() => {
-                        if tokio::fs::rename(&temp_path, &cache_path).await.is_ok() {
-                            tracing::info!("Transcoding of track {} complete.", id);
-                            transcode_success = true;
-                            true
-                        } else {
-                            tracing::error!("Failed to rename temp transcoded file for track {}", id);
+                let rename_success = if prepared {
+                    let input_file = if is_s3 { &temp_s3_input } else { &stream_path };
+                    let status = tokio::process::Command::new("ffmpeg")
+                        .args(&[
+                            "-y",
+                            "-i", &input_file.to_string_lossy(),
+                            "-codec:a", "libmp3lame",
+                            "-b:a", "320k",
+                            &temp_path.to_string_lossy(),
+                        ])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status()
+                        .await;
+
+                    match status {
+                        Ok(s) if s.success() => {
+                            if tokio::fs::rename(&temp_path, &cache_path).await.is_ok() {
+                                tracing::info!("Transcoding of track {} complete.", id);
+                                transcode_success = true;
+                                true
+                            } else {
+                                tracing::error!("Failed to rename temp transcoded file for track {}", id);
+                                let _ = tokio::fs::remove_file(&temp_path).await;
+                                false
+                            }
+                        }
+                        _ => {
+                            tracing::error!("FFmpeg transcoding failed for track {}", id);
                             let _ = tokio::fs::remove_file(&temp_path).await;
                             false
                         }
                     }
-                    _ => {
-                        tracing::error!("FFmpeg transcoding failed for track {}", id);
-                        let _ = tokio::fs::remove_file(&temp_path).await;
-                        false
-                    }
+                } else {
+                    false
                 };
+
+                if is_s3 && temp_s3_input.exists() {
+                    let _ = std::fs::remove_file(&temp_s3_input);
+                }
 
                 // Broadcast final transcoding status
                 let final_status = if rename_success { "complete" } else { "failed" };
@@ -217,15 +264,35 @@ pub async fn get_track_cover(
     };
 
     if let Some(ref path) = cover_path {
-        let full_path = state.config.data_dir.join(path);
-        if full_path.exists() {
-            if let Ok(bytes) = std::fs::read(&full_path) {
-                let mime = mime_guess::from_path(&full_path).first_or_octet_stream();
-                return (
-                    StatusCode::OK,
-                    [(header::CONTENT_TYPE, mime.to_string())],
-                    bytes,
-                ).into_response();
+        let storage = state.storage_backend.read().await;
+        match &*storage {
+            crate::storage::StorageBackend::Local { .. } => {
+                let full_path = state.config.data_dir.join(path);
+                if full_path.exists() {
+                    if let Ok(bytes) = std::fs::read(&full_path) {
+                        let mime = mime_guess::from_path(&full_path).first_or_octet_stream();
+                        return (
+                            StatusCode::OK,
+                            [(header::CONTENT_TYPE, mime.to_string())],
+                            bytes,
+                        ).into_response();
+                    }
+                }
+            }
+            crate::storage::StorageBackend::S3 { .. } => {
+                match storage.get_presigned_url(path, 3600).await {
+                    Ok(url) => {
+                        return Response::builder()
+                            .status(StatusCode::FOUND)
+                            .header(header::LOCATION, url)
+                            .body(Body::empty())
+                            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+                            .into_response();
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to generate cover presigned URL: {}", e);
+                    }
+                }
             }
         }
     }
@@ -259,7 +326,8 @@ pub async fn stream_track_subsonic(
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    let stream_path = state.config.data_dir.join(&path);
+    let storage = state.storage_backend.read().await;
+    let is_s3 = matches!(&*storage, crate::storage::StorageBackend::S3 { .. });
 
     // Determine if transcoding is requested
     let mut needs_transcode = false;
@@ -309,58 +377,110 @@ pub async fn stream_track_subsonic(
 
         tracing::info!("On-the-fly Subsonic transcoding track {} using ffmpeg with target bitrate {} and format {}...", id, bitrate_str, mux_format);
 
-        let status = tokio::process::Command::new("ffmpeg")
-            .args(&[
-                "-y",
-                "-i", &stream_path.to_string_lossy(),
-                "-codec:a", codec_name,
-                "-b:a", &bitrate_str,
-                "-f", mux_format,
-                "pipe:1",
-            ])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn();
+        let temp_input = state.config.data_dir.join(format!("transcode_temp_{}.tmp", uuid::Uuid::new_v4()));
+        let mut prepared = true;
 
-        match status {
-            Ok(mut child) => {
-                if let Some(stdout) = child.stdout.take() {
-                    let stream = ReaderStream::new(stdout);
-                    let body = Body::from_stream(stream);
-                    return Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, mime_type)
-                        .header(header::ACCEPT_RANGES, "none")
-                        .body(body)
-                        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        if is_s3 {
+            match storage.get_object(&path).await {
+                Ok(bytes) => {
+                    if let Err(e) = std::fs::write(&temp_input, bytes) {
+                        tracing::error!("Failed to write subsonic S3 temp file: {}", e);
+                        prepared = false;
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to fetch subsonic S3 file: {}", e);
+                    prepared = false;
                 }
             }
-            Err(e) => {
-                tracing::error!("Failed to spawn ffmpeg: {}", e);
+        }
+
+        if prepared {
+            let input_file = if is_s3 { temp_input.clone() } else { state.config.data_dir.join(&path) };
+            let status = tokio::process::Command::new("ffmpeg")
+                .args(&[
+                    "-y",
+                    "-i", &input_file.to_string_lossy(),
+                    "-codec:a", codec_name,
+                    "-b:a", &bitrate_str,
+                    "-f", mux_format,
+                    "pipe:1",
+                ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+
+            match status {
+                Ok(mut child) => {
+                    let stdout = child.stdout.take();
+                    if is_s3 {
+                        tokio::spawn(async move {
+                            let _ = child.wait().await;
+                            let _ = tokio::fs::remove_file(temp_input).await;
+                        });
+                    }
+                    if let Some(stdout) = stdout {
+                        let stream = ReaderStream::new(stdout);
+                        let body = Body::from_stream(stream);
+                        return Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, mime_type)
+                            .header(header::ACCEPT_RANGES, "none")
+                            .body(body)
+                            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to spawn ffmpeg: {}", e);
+                    if is_s3 {
+                        let _ = std::fs::remove_file(temp_input);
+                    }
+                }
             }
         }
     }
 
-    // Direct stream fallback
-    let file = match File::open(&stream_path).await {
-        Ok(f) => f,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
-    };
+    if is_s3 {
+        // Direct stream fallback from S3 (download into memory)
+        match storage.get_object(&path).await {
+            Ok(bytes) => {
+                let file_size = bytes.len() as u64;
+                let mime_type = mime_for_format(format.as_deref());
+                let body = Body::from(bytes);
 
-    let file_size = match file.metadata().await {
-        Ok(m) => m.len(),
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_LENGTH, file_size)
+                    .header(header::ACCEPT_RANGES, "none")
+                    .header(header::CONTENT_TYPE, mime_type)
+                    .body(body)
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+            }
+            Err(_) => StatusCode::NOT_FOUND.into_response(),
+        }
+    } else {
+        // Direct stream fallback local
+        let stream_path = state.config.data_dir.join(&path);
+        let file = match File::open(&stream_path).await {
+            Ok(f) => f,
+            Err(_) => return StatusCode::NOT_FOUND.into_response(),
+        };
 
-    let mime_type = mime_for_format(format.as_deref());
-    let stream = ReaderStream::new(file);
-    let body = Body::from_stream(stream);
+        let file_size = match file.metadata().await {
+            Ok(m) => m.len(),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
 
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_LENGTH, file_size)
-        .header(header::ACCEPT_RANGES, "bytes")
-        .header(header::CONTENT_TYPE, mime_type)
-        .body(body)
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        let mime_type = mime_for_format(format.as_deref());
+        let stream = ReaderStream::new(file);
+        let body = Body::from_stream(stream);
+
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_LENGTH, file_size)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::CONTENT_TYPE, mime_type)
+            .body(body)
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    }
 }

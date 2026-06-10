@@ -6,6 +6,8 @@ mod events;
 mod scanner;
 mod api;
 mod tunnel;
+mod storage;
+
 
 use std::sync::Arc;
 use tracing::{info, warn, error};

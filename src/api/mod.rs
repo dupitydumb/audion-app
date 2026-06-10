@@ -11,6 +11,7 @@ pub mod library;
 pub mod users;
 pub mod subsonic;
 pub mod tunnel;
+pub mod storage_settings;
 
 use axum::{
     routing::{get, post, put, delete},
@@ -76,6 +77,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/admin/stats", get(users::admin_stats))
         .route("/api/admin/tunnel", get(tunnel::get_tunnel_info).put(tunnel::update_tunnel_config))
         .route("/api/admin/tunnel/toggle", post(tunnel::toggle_tunnel))
+        .route("/api/admin/storage", get(storage_settings::get_storage_settings).put(storage_settings::update_storage_settings))
         .route("/rest/ping.view", get(subsonic::ping).post(subsonic::ping))
         .route("/rest/getLicense.view", get(subsonic::get_license).post(subsonic::get_license))
         .route("/rest/getMusicFolders.view", get(subsonic::get_music_folders).post(subsonic::get_music_folders))

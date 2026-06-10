@@ -34,6 +34,7 @@ pub struct AppState {
     pub user_pools: Arc<tokio::sync::RwLock<std::collections::HashMap<String, SqlitePool>>>,
     pub scan_statuses: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<Mutex<ScanStatus>>>>>,
     pub fetcher_statuses: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Arc<Mutex<FetcherStatus>>>>>,
+    pub storage_backend: Arc<tokio::sync::RwLock<crate::storage::StorageBackend>>,
 }
 
 impl AppState {
@@ -69,6 +70,10 @@ impl AppState {
 
         let tunnel_manager = Arc::new(tokio::sync::Mutex::new(TunnelManager::new(pool.clone(), config.port).await));
 
+        let storage_backend = Arc::new(tokio::sync::RwLock::new(
+            Self::load_storage_backend_from_db(&pool, &config.data_dir).await
+        ));
+
         Self {
             pool,
             config,
@@ -80,8 +85,67 @@ impl AppState {
             user_pools: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             scan_statuses: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             fetcher_statuses: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            storage_backend,
         }
     }
+
+    pub async fn load_storage_backend_from_db(pool: &SqlitePool, data_dir: &std::path::Path) -> crate::storage::StorageBackend {
+        let storage_type = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 'storage_type'")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "local".to_string());
+
+        if storage_type == "s3" {
+            let endpoint = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_endpoint'")
+                .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
+            let bucket = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_bucket'")
+                .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
+            let access_key = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_access_key'")
+                .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
+            let secret_key = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_secret_key'")
+                .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
+            let region = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_region'")
+                .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
+            let force_path_style = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_force_path_style'")
+                .fetch_optional(pool).await.ok().flatten()
+                .map(|v| v == "true")
+                .unwrap_or(false);
+
+            match crate::storage::build_s3_client(
+                &endpoint,
+                &bucket,
+                &access_key,
+                &secret_key,
+                &region,
+                force_path_style,
+            ) {
+                Ok(client) => crate::storage::StorageBackend::S3 {
+                    client,
+                    bucket,
+                    endpoint_url: endpoint,
+                },
+                Err(e) => {
+                    tracing::error!("Failed to build S3 storage backend: {}. Falling back to local.", e);
+                    crate::storage::StorageBackend::Local {
+                        data_dir: data_dir.to_path_buf(),
+                    }
+                }
+            }
+        } else {
+            crate::storage::StorageBackend::Local {
+                data_dir: data_dir.to_path_buf(),
+            }
+        }
+    }
+
+    pub async fn reload_storage_backend(&self) {
+        let new_backend = Self::load_storage_backend_from_db(&self.pool, &self.config.data_dir).await;
+        let mut w = self.storage_backend.write().await;
+        *w = new_backend;
+    }
+
 
     pub async fn get_user_pool(&self, user_id: &str) -> Result<SqlitePool, sqlx::Error> {
         {
