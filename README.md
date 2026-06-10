@@ -2,7 +2,6 @@
 
 A lightweight, self-hosted audio streaming server written in Rust with a modern, responsive Svelte frontend. Audion Server enables you to upload, manage, index, and stream your personal music library seamlessly.
 
-![License](https://img.shields.io/github/license/dupitydumb/audion-server-docker?style=for-the-badge)
 ![Rust](https://img.shields.io/badge/rust-%23E34F26.svg?style=for-the-badge&logo=rust&logoColor=white)
 ![Svelte](https://img.shields.io/badge/svelte-%23FF3E00.svg?style=for-the-badge&logo=svelte&logoColor=white)
 ![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
