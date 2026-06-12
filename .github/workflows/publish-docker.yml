@@ -5,6 +5,12 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to publish (e.g., v1.3.5)'
+        required: true
+        type: string
+        default: 'v1.3.5'
 
 env:
   REGISTRY: ghcr.io
@@ -43,6 +49,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-
             type=raw,value=latest
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Build and push Server Docker image
         uses: docker/build-push-action@v6
@@ -86,6 +93,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-
             type=raw,value=latest
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Build and push Frontend Docker image
         uses: docker/build-push-action@v6
