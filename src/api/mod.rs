@@ -83,6 +83,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/profile", put(auth::update_profile))
         .route("/api/admin/users", get(users::list_users).post(users::create_user))
         .route("/api/admin/users/:id", put(users::update_user).delete(users::delete_user))
+        .route("/api/admin/users/:id/quota", put(users::update_user_quota))
         .route("/api/admin/stats", get(users::admin_stats))
         .route("/api/admin/tunnel", get(tunnel::get_tunnel_info).put(tunnel::update_tunnel_config))
         .route("/api/admin/tunnel/toggle", post(tunnel::toggle_tunnel))

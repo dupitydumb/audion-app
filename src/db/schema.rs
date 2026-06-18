@@ -17,15 +17,19 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             listenbrainz_token TEXT,
             is_enabled INTEGER DEFAULT 1,
             subsonic_password TEXT,
+            storage_quota_bytes INTEGER DEFAULT NULL,
+            can_upload INTEGER DEFAULT 1,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );"
     ).execute(pool).await?;
 
-    // Try to alter users table for existing databases to add role, listenbrainz_token, is_enabled, and subsonic_password
+    // Try to alter users table for existing databases to add role, listenbrainz_token, is_enabled, subsonic_password, storage_quota_bytes, and can_upload
     let _ = sqlx::query("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'User'").execute(pool).await;
     let _ = sqlx::query("ALTER TABLE users ADD COLUMN listenbrainz_token TEXT").execute(pool).await;
     let _ = sqlx::query("ALTER TABLE users ADD COLUMN is_enabled INTEGER DEFAULT 1").execute(pool).await;
     let _ = sqlx::query("ALTER TABLE users ADD COLUMN subsonic_password TEXT").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN storage_quota_bytes INTEGER DEFAULT NULL").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN can_upload INTEGER DEFAULT 1").execute(pool).await;
 
     // Create albums table (matching client)
     sqlx::query(

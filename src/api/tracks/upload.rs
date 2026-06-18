@@ -23,6 +23,34 @@ pub async fn upload_track(
         return Err((StatusCode::BAD_REQUEST, "Missing file payload".to_string()));
     }
 
+    // Check if user is allowed to upload and check their storage quota
+    let (can_upload, storage_quota_bytes): (i32, Option<i64>) = sqlx::query_as(
+        "SELECT can_upload, storage_quota_bytes FROM users WHERE id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to retrieve user upload settings: {}", e)))?;
+
+    if can_upload == 0 {
+        return Err((StatusCode::FORBIDDEN, "Upload access has been disabled for your account".to_string()));
+    }
+
+    if let Some(quota) = storage_quota_bytes {
+        let current_usage: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(size), 0) FROM tracks")
+            .fetch_one(&user_pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to query storage usage: {}", e)))?;
+
+        let new_file_size = file_bytes.len() as i64;
+        if current_usage + new_file_size > quota {
+            return Err((StatusCode::INSUFFICIENT_STORAGE, format!(
+                "Storage quota exceeded. Limit is {} bytes, but current usage is {} bytes and uploading this file would exceed that.",
+                quota, current_usage
+            )));
+        }
+    }
+
     // Generate unique storage name
     let file_uuid = Uuid::new_v4().to_string();
     let ext = PathBuf::from(&original_filename)

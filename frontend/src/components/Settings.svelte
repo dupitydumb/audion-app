@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Shield, Database, Key, HelpCircle, LogOut, RefreshCw, FolderSync, Trash2, User, Users, Cpu, FileText, CheckCircle2, AlertTriangle, Edit2, UserPlus, Check, X, Globe, Copy, ExternalLink, Lock, Search } from '@lucide/svelte';
+  import { Shield, Database, Key, HelpCircle, LogOut, RefreshCw, FolderSync, Trash2, User, Users, Cpu, FileText, CheckCircle2, AlertTriangle, Edit2, UserPlus, Check, X, Globe, Copy, ExternalLink, Lock, Search, HardDrive, UploadCloud, Ban, Infinity } from '@lucide/svelte';
 
   // Props in Svelte 5
   let { token, username, role, listenbrainzToken, scanStatus, fetcherStatus, onLogout, addToast, onProfileUpdate } = $props<{
@@ -24,6 +24,7 @@
   let isSavingProfile = $state(false);
 
   // User search and stats state
+  let usersList = $state<any[]>([]);
   let userSearchQuery = $state('');
   let filteredUsers = $derived(
     usersList.filter(u => 
@@ -227,7 +228,6 @@
   }
 
   // User Management States
-  let usersList = $state<any[]>([]);
   let isLoadingUsers = $state(false);
   let isCreatingUser = $state(false);
   
@@ -245,6 +245,18 @@
   let editIsEnabled = $state(1);
   let editLbToken = $state('');
   let isUpdating = $state(false);
+
+  // Storage stats fetched from /api/admin/stats
+  let adminUserStats = $state<any[]>([]);
+  let isLoadingAdminUserStats = $state(false);
+
+  // Quota edit modal
+  let quotaModalUserId = $state<string | null>(null);
+  let quotaModalUsername = $state('');
+  let quotaModalQuotaGB = $state('10');   // numeric GB value
+  let quotaModalUnlimited = $state(false); // checkbox: no limit
+  let quotaModalCanUpload = $state(true);  // toggle switch
+  let isSavingQuota = $state(false);
 
   async function fetchUsers() {
     isLoadingUsers = true;
@@ -412,9 +424,98 @@
     editLbToken = user.listenbrainz_token || '';
   }
 
+  async function fetchAdminUserStats() {
+    if (role !== 'Admin') return;
+    isLoadingAdminUserStats = true;
+    try {
+      const res = await fetch('/api/admin/stats', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        adminUserStats = await res.json();
+      }
+    } catch (e) {
+      console.error('Failed to fetch admin user stats', e);
+    } finally {
+      isLoadingAdminUserStats = false;
+    }
+  }
+
+  function getStatForUser(userId: string): any | null {
+    return adminUserStats.find(s => s.user_id === userId) || null;
+  }
+
+  function getQuotaBarColor(pct: number): string {
+    if (pct >= 95) return 'var(--danger)';
+    if (pct >= 80) return 'var(--warning)';
+    return 'var(--success)';
+  }
+
+  function openQuotaModal(user: any) {
+    quotaModalUserId = user.id;
+    quotaModalUsername = user.username;
+    quotaModalCanUpload = user.can_upload !== 0;
+    
+    if (user.storage_quota_bytes === null || user.storage_quota_bytes === undefined || user.storage_quota_bytes < 0) {
+      quotaModalUnlimited = true;
+      quotaModalQuotaGB = '10'; // default input placeholder when toggled back
+    } else {
+      quotaModalUnlimited = false;
+      quotaModalQuotaGB = (user.storage_quota_bytes / 1073741824).toFixed(2);
+      // Clean up .00 from decimal format if it's an integer
+      if (quotaModalQuotaGB.endsWith('.00')) {
+        quotaModalQuotaGB = quotaModalQuotaGB.slice(0, -3);
+      }
+    }
+  }
+
+  async function handleSaveQuota() {
+    if (!quotaModalUserId) return;
+    isSavingQuota = true;
+    try {
+      let quotaBytes: number | null = null;
+      if (!quotaModalUnlimited) {
+        const parsed = parseFloat(quotaModalQuotaGB);
+        if (isNaN(parsed) || parsed < 0) {
+          addToast('Please enter a valid storage quota', 'error');
+          isSavingQuota = false;
+          return;
+        }
+        quotaBytes = Math.round(parsed * 1073741824);
+      }
+
+      const res = await fetch(`/api/admin/users/${quotaModalUserId}/quota`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          storage_quota_bytes: quotaBytes,
+          can_upload: quotaModalCanUpload ? 1 : 0
+        })
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Failed to update quota');
+      }
+
+      addToast('Storage quota and upload status updated successfully', 'success');
+      quotaModalUserId = null; // Close modal
+      // Refresh user lists and stats
+      await Promise.all([fetchUsers(), fetchAdminUserStats()]);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to update storage quota', 'error');
+    } finally {
+      isSavingQuota = false;
+    }
+  }
+
   $effect(() => {
     if (activeTab === 'users' && role === 'Admin') {
       fetchUsers();
+      fetchAdminUserStats();
     }
   });
 
@@ -947,12 +1048,17 @@
                   <th style="text-align: left; padding: 0.75rem;">Role</th>
                   <th style="text-align: left; padding: 0.75rem;">ListenBrainz Token</th>
                   <th style="text-align: left; padding: 0.75rem;">Status</th>
+                  <th style="text-align: left; padding: 0.75rem;">Storage</th>
+                  <th style="text-align: left; padding: 0.75rem;">Uploads</th>
                   <th style="text-align: left; padding: 0.75rem;">Created At</th>
                   <th style="text-align: right; padding: 0.75rem;">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {#each filteredUsers as u}
+                  {@const stat = getStatForUser(u.id)}
+                  {@const used = stat ? stat.total_size_bytes : 0}
+                  {@const quota = u.storage_quota_bytes}
                   <tr>
                     <td style="padding: 0.75rem; vertical-align: middle;">
                       {#if editingUserId === u.id}
@@ -997,6 +1103,37 @@
                         <span style="color: var(--danger); font-weight: 500;">Disabled</span>
                       {/if}
                     </td>
+                    <td style="padding: 0.75rem; vertical-align: middle;">
+                      <div style="display: flex; flex-direction: column; gap: 0.25rem; min-width: 140px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-secondary);">
+                          <span>{formatBytes(used)}</span>
+                          {#if quota === null || quota === undefined || quota < 0}
+                            <span style="display: flex; align-items: center; gap: 0.15rem; color: var(--text-muted);">
+                              <Infinity size={10} /> Unlimited
+                            </span>
+                          {:else}
+                            <span>/ {formatBytes(quota)}</span>
+                          {/if}
+                        </div>
+                        {#if quota !== null && quota !== undefined && quota > 0}
+                          {@const pct = Math.min((used / quota) * 100, 100)}
+                          <div class="storage-bar-container">
+                            <div class="storage-bar-fill" style="width: {pct}%; background-color: {getQuotaBarColor(pct)};"></div>
+                          </div>
+                        {/if}
+                      </div>
+                    </td>
+                    <td style="padding: 0.75rem; vertical-align: middle;">
+                      {#if u.can_upload === 0}
+                        <span class="quota-badge frozen">
+                          <Ban size={10} /> Frozen
+                        </span>
+                      {:else}
+                        <span class="quota-badge enabled">
+                          <UploadCloud size={10} /> Enabled
+                        </span>
+                      {/if}
+                    </td>
                     <td style="padding: 0.75rem; vertical-align: middle; color: var(--text-secondary); font-family: monospace; font-size: 0.85rem;">
                       {formatDateTime(u.created_at)}
                     </td>
@@ -1012,6 +1149,9 @@
                         </div>
                       {:else}
                         <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                          <button onclick={() => openQuotaModal(u)} class="btn btn-secondary" style="padding: 0.35rem 0.5rem; font-size: 0.85rem; display: flex; align-items: center; gap: 0.25rem;">
+                            <HardDrive size={12} /> Quota
+                          </button>
                           <button onclick={() => startEditing(u)} class="btn btn-secondary" style="padding: 0.35rem 0.5rem; font-size: 0.85rem; display: flex; align-items: center; gap: 0.25rem;">
                             <Edit2 size={12} /> Edit
                           </button>
@@ -1030,6 +1170,105 @@
           </div>
         {/if}
       </div>
+
+      <!-- Quota Edit Modal Overlay -->
+      {#if quotaModalUserId !== null}
+        {@const userStat = getStatForUser(quotaModalUserId)}
+        {@const usedBytes = userStat ? userStat.total_size_bytes : 0}
+        <div class="quota-modal-backdrop" onclick={() => quotaModalUserId = null}>
+          <div class="glass-card quota-modal" onclick={(e) => e.stopPropagation()}>
+            <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 1rem; margin-bottom: 1.5rem;">
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <HardDrive size={20} style="color: var(--accent);" />
+                <h3 style="font-family: var(--font-heading); font-size: 1.15rem; font-weight: 600; margin: 0;">Storage & Uploads — {quotaModalUsername}</h3>
+              </div>
+              <button class="btn btn-secondary" style="padding: 0.25rem; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;" onclick={() => quotaModalUserId = null}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <!-- Current Storage Usage Display -->
+            <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+              <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.5rem;">
+                <span style="color: var(--text-secondary);">Current Usage</span>
+                <span style="font-weight: 600; color: var(--text-primary);">
+                  {formatBytes(usedBytes)} / {quotaModalUnlimited ? 'Unlimited' : formatBytes(parseFloat(quotaModalQuotaGB || '0') * 1073741824)}
+                </span>
+              </div>
+              
+              {#if !quotaModalUnlimited}
+                {@const targetQuotaBytes = parseFloat(quotaModalQuotaGB || '0') * 1073741824}
+                {@const usagePct = targetQuotaBytes > 0 ? Math.min((usedBytes / targetQuotaBytes) * 100, 100) : 0}
+                <div class="storage-bar-container" style="height: 8px; margin-bottom: 0.25rem;">
+                  <div class="storage-bar-fill" style="width: {usagePct}%; background-color: {getQuotaBarColor(usagePct)};"></div>
+                </div>
+                <div style="display: flex; justify-content: flex-end; font-size: 0.75rem; color: {getQuotaBarColor(usagePct)}; font-weight: 500;">
+                  {usagePct.toFixed(1)}% Used
+                </div>
+              {:else}
+                <div class="storage-bar-container" style="height: 8px; margin-bottom: 0.25rem;">
+                  <div class="storage-bar-fill" style="width: 0%; background-color: var(--success);"></div>
+                </div>
+                <div style="display: flex; justify-content: flex-end; font-size: 0.75rem; color: var(--text-muted);">
+                  No limit enforced
+                </div>
+              {/if}
+            </div>
+
+            <!-- Quota Configuration Form -->
+            <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+              <div class="form-group">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                  <label class="form-label" for="quotaLimitInput" style="margin: 0;">Storage Limit</label>
+                  <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;">
+                    <input type="checkbox" bind:checked={quotaModalUnlimited} style="accent-color: var(--accent);" />
+                    <span>No Limit</span>
+                  </label>
+                </div>
+                
+                <div style="position: relative; display: flex; align-items: center;">
+                  <input 
+                    type="number" 
+                    id="quotaLimitInput" 
+                    class="form-input" 
+                    style="width: 100%; padding-right: 3rem;" 
+                    placeholder="Enter quota"
+                    min="0.1" 
+                    step="any"
+                    disabled={quotaModalUnlimited}
+                    bind:value={quotaModalQuotaGB}
+                  />
+                  <span style="position: absolute; right: 1rem; color: var(--text-muted); font-size: 0.85rem; font-weight: 600; pointer-events: none;">GB</span>
+                </div>
+              </div>
+
+              <!-- Upload restriction toggle switch -->
+              <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.85rem 1rem;">
+                <div style="display: flex; flex-direction: column; gap: 0.15rem;">
+                  <span style="font-weight: 500; font-size: 0.9rem; color: var(--text-primary);">Allow Direct Uploads</span>
+                  <span style="font-size: 0.75rem; color: var(--text-secondary);">Permit user to upload tracks directly</span>
+                </div>
+                <label class="switch-container">
+                  <input type="checkbox" bind:checked={quotaModalCanUpload} />
+                  <span class="switch-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Form Actions -->
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 1.25rem;">
+              <button class="btn btn-secondary" onclick={() => quotaModalUserId = null}>Cancel</button>
+              <button class="btn btn-primary" onclick={handleSaveQuota} disabled={isSavingQuota}>
+                {#if isSavingQuota}
+                  <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite; margin-right: 0.25rem;" /> Saving...
+                {:else}
+                  Save Changes
+                {/if}
+              </button>
+            </div>
+          </div>
+        </div>
+      {/if}
     </div>
 
   <!-- Library Management Tab -->
@@ -1806,5 +2045,130 @@
     border: 1px solid var(--border-color);
     border-radius: 6px;
     padding: 1rem;
+  }
+
+  .quota-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    border-radius: 4px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.5rem;
+    border: 1px solid transparent;
+  }
+  .quota-badge.enabled {
+    background: rgba(16, 185, 129, 0.15); /* success */
+    color: var(--success);
+    border-color: rgba(16, 185, 129, 0.3);
+  }
+  .quota-badge.frozen {
+    background: rgba(239, 68, 68, 0.15); /* danger */
+    color: var(--danger);
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+  
+  .storage-bar-container {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+    overflow: hidden;
+    width: 100%;
+  }
+  .storage-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.3s ease, background-color 0.3s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  .quota-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    animation: fadeIn 0.2s ease-out forwards;
+  }
+
+  .quota-modal {
+    width: 100%;
+    max-width: 480px;
+    background: #0d0d0f;
+    border: 1px solid var(--border-color);
+    padding: 1.5rem;
+    border-radius: 12px;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.5);
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  /* Switch toggle styling */
+  .switch-container {
+    position: relative;
+    display: inline-block;
+    width: 46px;
+    height: 24px;
+    cursor: pointer;
+  }
+
+  .switch-container input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .switch-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border-color);
+    transition: .3s;
+    border-radius: 24px;
+  }
+
+  .switch-slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background-color: var(--text-muted);
+    transition: .3s;
+    border-radius: 50%;
+  }
+
+  .switch-container input:checked + .switch-slider {
+    background-color: rgba(168, 85, 247, 0.2);
+    border-color: var(--accent);
+  }
+
+  .switch-container input:checked + .switch-slider:before {
+    transform: translateX(22px);
+    background-color: var(--accent);
+  }
+
+  .switch-container input:focus + .switch-slider {
+    box-shadow: 0 0 1px var(--accent);
   }
 </style>

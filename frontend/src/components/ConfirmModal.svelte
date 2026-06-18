@@ -103,7 +103,7 @@
     max-width: 440px;
     padding: 2.25rem 2rem 2rem;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(18, 18, 22, 0.85);
+    background: #0d0d0f;
     border-radius: 16px;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6),
                 0 0 25px 0 rgba(255, 255, 255, 0.02);

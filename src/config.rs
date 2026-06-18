@@ -8,6 +8,7 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub port: u16,
     pub public_dir: PathBuf,
+    pub default_storage_quota_bytes: Option<i64>,
 }
 
 impl Config {
@@ -40,6 +41,17 @@ impl Config {
         let public_dir_str = std::env::var("AUDION_PUBLIC_DIR").unwrap_or_else(|_| "./frontend/dist".to_string());
         let public_dir = PathBuf::from(public_dir_str);
 
+        let default_storage_quota_bytes = match std::env::var("AUDION_DEFAULT_STORAGE_QUOTA_BYTES") {
+            Ok(val) => {
+                if val.to_lowercase() == "unlimited" || val == "-1" {
+                    None
+                } else {
+                    val.parse::<i64>().ok().or(Some(10 * 1024 * 1024 * 1024))
+                }
+            }
+            Err(_) => Some(10 * 1024 * 1024 * 1024), // 10 GB default
+        };
+
         Config {
             admin_user,
             admin_password_raw,
@@ -47,6 +59,7 @@ impl Config {
             data_dir,
             port,
             public_dir,
+            default_storage_quota_bytes,
         }
     }
 

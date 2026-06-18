@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Music } from '@lucide/svelte';
 
+  const version = __APP_VERSION__;
+
   // Props in Svelte 5
   let { onLoginSuccess, addToast } = $props<{
     onLoginSuccess: (token: string, username: string, role: string, listenbrainz_token: string) => void;
@@ -48,7 +50,10 @@
       <div class="brand-logo">
         <Music size={20} />
       </div>
-      <h1 class="brand-name" style="margin: 0;">Audion Server</h1>
+      <div class="brand-info" style="display: flex; flex-direction: column; align-items: flex-start;">
+        <h1 class="brand-name" style="margin: 0; line-height: 1.2;">Audion Server</h1>
+        <span class="brand-version" style="font-size: 0.7rem; color: var(--text-muted); font-weight: 500;">v{version}</span>
+      </div>
     </div>
 
     <h2 style="text-align: center; margin-bottom: 1.5rem; font-family: var(--font-heading); font-weight: 600;">Admin Portal</h2>

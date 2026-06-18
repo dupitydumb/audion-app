@@ -979,6 +979,7 @@
   .modal-content {
     width: 100%;
     max-width: 500px;
+    background: #0d0d0f;
     padding: 2rem;
     border: 1px solid var(--border-color);
     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);

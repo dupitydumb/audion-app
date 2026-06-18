@@ -49,6 +49,8 @@
   
   import { configureUploadQueue, summarizeQueue, uploadQueue } from './stores/uploadQueue';
 
+  const version = __APP_VERSION__;
+
   // Authentication State
   let token = $state(localStorage.getItem('audion_admin_token') || '');
   let username = $state(localStorage.getItem('audion_admin_username') || '');
@@ -820,7 +822,10 @@
         <div class="brand-logo">
           <Music size={16} />
         </div>
-        <span class="brand-name">Audion</span>
+        <div class="brand-info" style="display: flex; flex-direction: column;">
+          <span class="brand-name">Audion</span>
+          <span class="brand-version" style="font-size: 0.7rem; color: var(--text-muted); font-weight: 500; margin-top: -2px;">v{version}</span>
+        </div>
       </div>
 
       <nav class="nav-links">
