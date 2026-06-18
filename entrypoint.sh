@@ -24,6 +24,26 @@ fi
 echo "Fixing ownership for /data and /app..."
 chown -R audion:audion /data /app
 
+# Print getting started info
+AUDION_PORT=${AUDION_PORT:-8080}
+AUDION_ADMIN_USER=${AUDION_ADMIN_USER:-admin}
+
+echo ""
+echo "========================================================================"
+echo "  Audion Server is ready!"
+echo "========================================================================"
+echo "  🌐 Web UI / API:       http://localhost:${AUDION_PORT}"
+echo "  🔑 Admin Username:     ${AUDION_ADMIN_USER}"
+echo "  📁 Data Directory:     /data (SQLite DB & settings)"
+echo "  🎵 Music Directory:    /data/users/<username>/"
+echo ""
+echo "  To get started:"
+echo "  1. Open http://localhost:${AUDION_PORT} in your web browser."
+echo "  2. Log in using the admin credentials from your .env file."
+echo "  3. Upload/drop your music files under the users' directory."
+echo "========================================================================"
+echo ""
+
 # Drop privileges and run the main command
 echo "Launching audion-server as non-root user..."
 exec gosu audion /app/audion-server "$@"
