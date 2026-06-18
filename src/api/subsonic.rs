@@ -675,6 +675,66 @@ pub async fn stream(
     ).await
 }
 
+// GET/POST /rest/getUser.view
+pub async fn get_user(
+    State(state): State<AppState>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    let f = params.f.as_deref().unwrap_or("xml");
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+
+    let is_admin = user.role == "Admin";
+
+    if f == "json" {
+        let body = serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1",
+                "user": {
+                    "username": user.username,
+                    "email": "",
+                    "scrobblingEnabled": true,
+                    "maxBitRate": 0,
+                    "adminRole": is_admin,
+                    "settingsRole": is_admin,
+                    "downloadRole": true,
+                    "uploadRole": is_admin,
+                    "playlistRole": true,
+                    "coverArtRole": true,
+                    "commentRole": false,
+                    "podcastRole": false,
+                    "streamRole": true,
+                    "jukeboxRole": false,
+                    "shareRole": false,
+                    "videoConversionRole": false,
+                    "folder": [1]
+                }
+            }
+        });
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], Json(body)).into_response()
+    } else {
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1">
+    <user username="{}" email="" scrobblingEnabled="true" maxBitRate="0"
+          adminRole="{}" settingsRole="{}" downloadRole="true" uploadRole="{}"
+          playlistRole="true" coverArtRole="true" commentRole="false" podcastRole="false"
+          streamRole="true" jukeboxRole="false" shareRole="false" videoConversionRole="false">
+        <folder>1</folder>
+    </user>
+</subsonic-response>"#,
+            escape_xml(&user.username),
+            is_admin,
+            is_admin,
+            is_admin,
+        );
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
+    }
+}
+
 // GET/POST /rest/scrobble.view
 pub async fn scrobble(
     State(state): State<AppState>,

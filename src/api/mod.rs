@@ -95,6 +95,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/rest/getSong.view", get(subsonic::get_song).post(subsonic::get_song))
         .route("/rest/stream", get(subsonic::stream).post(subsonic::stream))
         .route("/rest/stream.view", get(subsonic::stream).post(subsonic::stream))
+        .route("/rest/getUser.view", get(subsonic::get_user).post(subsonic::get_user))
         .route("/rest/scrobble.view", get(subsonic::scrobble).post(subsonic::scrobble))
         .route("/api/tracks", get(tracks::get_tracks).post(tracks::upload_track))
         .route("/api/tracks/:id", get(tracks::get_track_by_id).delete(tracks::delete_track))
