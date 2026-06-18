@@ -5,14 +5,14 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"
+      - "${AUDION_PORT}:${AUDION_PORT}"
     volumes:
       - ./data:/data
     env_file:
       - .env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:${AUDION_PORT}/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
