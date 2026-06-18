@@ -68,11 +68,11 @@ COPY --from=builder /app/target/release/audion-server /app/audion-server
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 # Expose server port
-EXPOSE 8080
+EXPOSE 8086
 
 # Set environment defaults
 ENV AUDION_DATA_DIR=/data
-ENV AUDION_PORT=8080
+ENV AUDION_PORT=8086
 ENV RUST_LOG=info
 ENV AUDION_ADMIN_USER=admin
 ENV AUDION_ADMIN_PASSWORD=changeme
