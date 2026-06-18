@@ -1710,9 +1710,12 @@
                       id="s3-endpoint" 
                       class="form-input" 
                       style="width: 100%;" 
-                      placeholder="https://s3.amazonaws.com (or custom provider URL)" 
+                      placeholder="e.g. https://<account-id>.r2.cloudflarestorage.com" 
                       bind:value={storageConfig.s3_endpoint}
                     />
+                    <p style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 0.3rem;">
+                      Do <strong>not</strong> include the bucket name in the URL.
+                    </p>
                   </div>
 
                   <div class="form-group">
@@ -1763,7 +1766,7 @@
                       id="s3-region" 
                       class="form-input" 
                       style="width: 100%;" 
-                      placeholder="us-east-1" 
+                      placeholder="us-east-1 (use 'auto' for Cloudflare R2)" 
                       bind:value={storageConfig.s3_region}
                     />
                   </div>
@@ -1774,9 +1777,20 @@
                         type="checkbox" 
                         bind:checked={storageConfig.s3_force_path_style} 
                       />
-                      <span>Force Path-Style Access (Needed for MinIO / LocalStack)</span>
+                      <span>Force Path-Style Access (Required for Cloudflare R2, MinIO, LocalStack)</span>
                     </label>
                   </div>
+                </div>
+
+                <!-- Cloudflare R2 helper box -->
+                <div style="background: rgba(249, 115, 22, 0.05); border: 1px solid rgba(249, 115, 22, 0.2); border-radius: 6px; padding: 0.9rem 1rem; font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5;">
+                  <strong style="color: #fb923c;">☁ Cloudflare R2 Quick Setup:</strong>
+                  <ul style="margin: 0.4rem 0 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.2rem;">
+                    <li><strong>Endpoint:</strong> <code style="background: rgba(0,0,0,0.3); padding: 0.1rem 0.3rem;">https://&lt;ACCOUNT_ID&gt;.r2.cloudflarestorage.com</code> — do <em>not</em> append the bucket name.</li>
+                    <li><strong>Region:</strong> <code style="background: rgba(0,0,0,0.3); padding: 0.1rem 0.3rem;">auto</code></li>
+                    <li><strong>Force Path-Style Access:</strong> must be <strong>enabled ✓</strong></li>
+                    <li>Use an <strong>R2 API Token</strong> (not your Cloudflare Global API Key) for Access Key / Secret Key.</li>
+                  </ul>
                 </div>
 
               </div>

@@ -124,9 +124,25 @@ pub async fn update_storage_settings(
 
         info!("Testing S3 storage connection to bucket: {}", bucket);
 
+        // Validate endpoint URL format
+        let endpoint_trimmed = endpoint.trim();
+        if !endpoint_trimmed.is_empty() {
+            if !endpoint_trimmed.starts_with("https://") && !endpoint_trimmed.starts_with("http://") {
+                return Err((StatusCode::BAD_REQUEST, "Endpoint URL must start with https:// or http://".to_string()));
+            }
+            // Warn if endpoint contains bucket name (common Cloudflare R2 mistake)
+            if endpoint_trimmed.contains(&bucket) {
+                return Err((StatusCode::BAD_REQUEST, format!(
+                    "Endpoint URL should NOT contain the bucket name. \
+                    For Cloudflare R2, use: https://<ACCOUNT_ID>.r2.cloudflarestorage.com \
+                    (without the bucket name '{}' in the URL)", bucket
+                )));
+            }
+        }
+
         // Build temporary S3 client to test
         let client = crate::storage::build_s3_client(
-            &endpoint,
+            endpoint_trimmed,
             &bucket,
             &access_key,
             &secret_key,
@@ -134,28 +150,32 @@ pub async fn update_storage_settings(
             force_path_style,
         ).map_err(|e| (StatusCode::BAD_REQUEST, format!("Failed to create S3 client configuration: {}", e)))?;
 
-        // Perform dummy write/delete
-        let test_key = "audion_connection_test.txt";
-        let body = aws_sdk_s3::primitives::ByteStream::from(b"test".to_vec());
-        
-        client.put_object()
+        // Use head_bucket as a lightweight read-only connectivity test.
+        // This avoids issues with Cloudflare WAF blocking PUT requests during testing,
+        // and works correctly with R2, B2, MinIO, and AWS S3.
+        client.head_bucket()
             .bucket(&bucket)
-            .key(test_key)
-            .content_type("text/plain")
-            .body(body)
             .send()
             .await
             .map_err(|e| {
-                error!("S3 test connection put failed: {:?}", e);
-                (StatusCode::BAD_REQUEST, format!("S3 connection test failed (Write): {:?}", e))
-            })?;
+                let err_str = format!("{:?}", e);
+                error!("S3 connection test (head_bucket) failed: {}", err_str);
+                
+                // Provide a user-friendly hint for common Cloudflare R2 issues
+                let hint = if err_str.contains("InvalidRequest") || err_str.contains("AuthorizationHeaderMalformed") {
+                    " — Hint: For Cloudflare R2, set region to 'auto' and enable 'Force Path Style'."
+                } else if err_str.contains("NoSuchBucket") {
+                    " — Hint: The bucket was not found. Check the bucket name."
+                } else if err_str.contains("InvalidAccessKeyId") || err_str.contains("SignatureDoesNotMatch") {
+                    " — Hint: Invalid credentials. Check your Access Key ID and Secret Key."
+                } else if err_str.contains("dispatch failure") || err_str.contains("ConnectorError") {
+                    " — Hint: Could not reach the endpoint. Check the Endpoint URL."
+                } else {
+                    ""
+                };
 
-        // Cleanup dummy object
-        let _ = client.delete_object()
-            .bucket(&bucket)
-            .key(test_key)
-            .send()
-            .await;
+                (StatusCode::BAD_REQUEST, format!("S3 connection test failed: {}{}", err_str, hint))
+            })?;
 
         info!("S3 storage connection test succeeded.");
     }
