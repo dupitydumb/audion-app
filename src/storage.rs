@@ -4,6 +4,7 @@ use aws_sdk_s3::Client;
 use aws_sdk_s3::config::Credentials;
 use aws_sdk_s3::config::Region;
 use aws_sdk_s3::presigning::PresigningConfig;
+use aws_config::timeout::TimeoutConfig;
 use tracing::info;
 
 #[derive(Clone, Debug)]
@@ -135,7 +136,13 @@ pub fn build_s3_client(
 
     let mut config_builder = aws_sdk_s3::config::Builder::new()
         .credentials_provider(credentials)
-        .region(Region::new(region.to_string()));
+        .region(Region::new(region.to_string()))
+        .timeout_config(
+            TimeoutConfig::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .read_timeout(Duration::from_secs(12))
+                .build()
+        );
 
     if !endpoint.trim().is_empty() {
         config_builder = config_builder.endpoint_url(endpoint.trim());

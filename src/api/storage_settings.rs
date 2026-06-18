@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::state::AppState;
 use crate::auth::Claims;
 use tracing::{info, error};
+use std::time::Duration;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StorageSettingsResponse {
@@ -153,29 +154,47 @@ pub async fn update_storage_settings(
         // Use head_bucket as a lightweight read-only connectivity test.
         // This avoids issues with Cloudflare WAF blocking PUT requests during testing,
         // and works correctly with R2, B2, MinIO, and AWS S3.
-        client.head_bucket()
-            .bucket(&bucket)
-            .send()
-            .await
-            .map_err(|e| {
-                let err_str = format!("{:?}", e);
-                error!("S3 connection test (head_bucket) failed: {}", err_str);
-                
-                // Provide a user-friendly hint for common Cloudflare R2 issues
-                let hint = if err_str.contains("InvalidRequest") || err_str.contains("AuthorizationHeaderMalformed") {
-                    " — Hint: For Cloudflare R2, set region to 'auto' and enable 'Force Path Style'."
-                } else if err_str.contains("NoSuchBucket") {
-                    " — Hint: The bucket was not found. Check the bucket name."
-                } else if err_str.contains("InvalidAccessKeyId") || err_str.contains("SignatureDoesNotMatch") {
-                    " — Hint: Invalid credentials. Check your Access Key ID and Secret Key."
-                } else if err_str.contains("dispatch failure") || err_str.contains("ConnectorError") {
-                    " — Hint: Could not reach the endpoint. Check the Endpoint URL."
-                } else {
-                    ""
-                };
+        //
+        // A 15-second timeout prevents the reverse proxy from issuing a 502 if the
+        // S3 endpoint is unreachable and the SDK would otherwise hang indefinitely.
+        let head_bucket_result = tokio::time::timeout(
+            Duration::from_secs(15),
+            client.head_bucket().bucket(&bucket).send(),
+        )
+        .await
+        .map_err(|_| {
+            error!("S3 connection test timed out after 15s for bucket: {}", bucket);
+            (
+                StatusCode::GATEWAY_TIMEOUT,
+                format!(
+                    "S3 connection test timed out after 15 seconds. \
+                    The endpoint '{}' did not respond in time. \
+                    Check that the endpoint URL is correct and reachable.",
+                    endpoint_trimmed
+                ),
+            )
+        })?
+        .map_err(|e| {
+            let err_str = format!("{:?}", e);
+            error!("S3 connection test (head_bucket) failed: {}", err_str);
 
-                (StatusCode::BAD_REQUEST, format!("S3 connection test failed: {}{}", err_str, hint))
-            })?;
+            // Provide a user-friendly hint for common Cloudflare R2 issues
+            let hint = if err_str.contains("InvalidRequest") || err_str.contains("AuthorizationHeaderMalformed") {
+                " — Hint: For Cloudflare R2, set region to 'auto' and enable 'Force Path Style'."
+            } else if err_str.contains("NoSuchBucket") {
+                " — Hint: The bucket was not found. Check the bucket name."
+            } else if err_str.contains("InvalidAccessKeyId") || err_str.contains("SignatureDoesNotMatch") {
+                " — Hint: Invalid credentials. Check your Access Key ID and Secret Key."
+            } else if err_str.contains("dispatch failure") || err_str.contains("ConnectorError") {
+                " — Hint: Could not reach the endpoint. Check the Endpoint URL."
+            } else {
+                ""
+            };
+
+            (StatusCode::BAD_REQUEST, format!("S3 connection test failed: {}{}", err_str, hint))
+        });
+
+        head_bucket_result?;
 
         info!("S3 storage connection test succeeded.");
     }
