@@ -1,6 +1,6 @@
 Hey Audion Community! 👋
 
-We have some incredibly exciting news for the self-hosters, homelab enthusiasts, and privacy advocates out there! We are officially introducing Audion Self-Hosting using audion-server-docker! 🐳✨
+We have some incredibly exciting news for the self-hosters, homelab enthusiasts, and privacy advocates out there! We are officially introducing Audion Self-Hosting using audion-app! 🐳✨
 
 If you’ve ever wanted to access your personal music library across all your devices, keep your data strictly private, and experience real-time library synchronization, this is the ultimate upgrade you've been waiting for.
 
@@ -33,7 +33,7 @@ Deploying your server and connecting your app is quick and painless. Here is the
 Step 1: Deploying the Audion Server with Docker
 The easiest way to run the server is using Docker Compose.
 
-Locate the docker-compose.yml file in the audion-server-docker directory. It defines two services:
+Locate the docker-compose.yml file in the audion-app directory. It defines two services:
 audion-server (Rust backend listening on port 8080)
 audion-frontend (Nginx + Svelte 5 frontend listening on port 80)
 Edit the environment variables in your docker-compose.yml file to secure your setup:

@@ -14,7 +14,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/audion-server
+  IMAGE_NAME: ${{ github.repository_owner }}/audion-app
 
 jobs:
   build-and-push:

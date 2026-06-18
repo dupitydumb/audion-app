@@ -111,7 +111,7 @@ Audion Server comes with a preconfigured `docker-compose.yml` for multi-containe
 >
 > You can fix this by running the following command to correct ownership in the running container:
 > ```bash
-> docker exec -u root audion-server-docker-audion-server-1 chown -R audion:audion /data
+> docker exec -u root audion-app-audion-server-1 chown -R audion:audion /data
 > ```
 
 ---
@@ -164,7 +164,7 @@ cargo run
 ## 📂 Project Directory Structure
 
 ```
-audion-server/
+audion-app/
 ├── .github/workflows/    # CI/CD Workflows (Docker build/publish to GHCR)
 ├── src/                  # Rust Backend Source
 │   ├── api/              # Axum handlers (auth, tracks, playlists, stream...)

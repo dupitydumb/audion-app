@@ -14,8 +14,8 @@ To develop on the codebase, you need:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-username/audion-server-docker.git
-   cd audion-server-docker
+   git clone https://github.com/your-username/audion-app.git
+   cd audion-app
    ```
 
 2. **Configure environment:**
