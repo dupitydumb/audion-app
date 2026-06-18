@@ -22,6 +22,7 @@ use axum::{
 };
 use tower_http::cors::{Any, CorsLayer};
 use serde::Serialize;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
 use crate::state::AppState;
 use crate::auth::Claims;
@@ -65,11 +66,19 @@ pub fn create_router(state: AppState) -> Router {
     let serve_dir = tower_http::services::ServeDir::new(&public_dir)
         .fallback(tower_http::services::ServeFile::new(public_dir.join("index.html")));
 
+    let governor_conf = std::sync::Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(6)
+            .burst_size(10)
+            .finish()
+            .unwrap(),
+    );
+
     Router::new()
         .route("/api/health", get(health))
         .route("/api/stats", get(stats))
         .route("/api/server-info", get(server_info))
-        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/login", post(auth::login).layer(GovernorLayer { config: governor_conf }))
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/profile", put(auth::update_profile))
         .route("/api/admin/users", get(users::list_users).post(users::create_user))
@@ -130,8 +139,44 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn health() -> &'static str {
-    "OK"
+#[derive(Serialize)]
+struct HealthResponse {
+    status: String,
+    version: String,
+    timestamp: String,
+}
+
+async fn health(
+    State(state): State<AppState>,
+) -> (StatusCode, Json<HealthResponse>) {
+    let db_check = sqlx::query("SELECT 1")
+        .execute(&state.pool)
+        .await;
+
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let version = env!("CARGO_PKG_VERSION").to_string();
+
+    match db_check {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(HealthResponse {
+                status: "ok".to_string(),
+                version,
+                timestamp,
+            }),
+        ),
+        Err(e) => {
+            tracing::error!("Health check database connection failed: {:?}", e);
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(HealthResponse {
+                    status: "degraded".to_string(),
+                    version,
+                    timestamp,
+                }),
+            )
+        }
+    }
 }
 
 async fn stats(

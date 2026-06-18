@@ -1,3 +1,14 @@
+# Build frontend stage
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm install
+
+COPY frontend/ .
+RUN npm run build
+
 # Build stage
 FROM rust:1.92-slim-bookworm AS builder
 
@@ -52,6 +63,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy compiled binary from builder
 COPY --from=builder /app/target/release/audion-server /app/audion-server
+
+# Copy built frontend from frontend-builder
+COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 # Expose server port
 EXPOSE 8080

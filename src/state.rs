@@ -71,7 +71,7 @@ impl AppState {
         let tunnel_manager = Arc::new(tokio::sync::Mutex::new(TunnelManager::new(pool.clone(), config.port).await));
 
         let storage_backend = Arc::new(tokio::sync::RwLock::new(
-            Self::load_storage_backend_from_db(&pool, &config.data_dir).await
+            Self::load_storage_backend_from_db(&pool, &config.data_dir, &config.jwt_secret).await
         ));
 
         Self {
@@ -89,7 +89,7 @@ impl AppState {
         }
     }
 
-    pub async fn load_storage_backend_from_db(pool: &SqlitePool, data_dir: &std::path::Path) -> crate::storage::StorageBackend {
+    pub async fn load_storage_backend_from_db(pool: &SqlitePool, data_dir: &std::path::Path, jwt_secret: &str) -> crate::storage::StorageBackend {
         let storage_type = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 'storage_type'")
             .fetch_optional(pool)
             .await
@@ -104,7 +104,7 @@ impl AppState {
                 .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
             let access_key = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_access_key'")
                 .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
-            let secret_key = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_secret_key'")
+            let secret_key_db = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_secret_key'")
                 .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
             let region = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_region'")
                 .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
@@ -112,6 +112,25 @@ impl AppState {
                 .fetch_optional(pool).await.ok().flatten()
                 .map(|v| v == "true")
                 .unwrap_or(false);
+
+            let secret_key = if secret_key_db.is_empty() {
+                "".to_string()
+            } else {
+                match crate::auth::decrypt_subsonic_password(&secret_key_db, jwt_secret) {
+                    Ok(decrypted) => decrypted,
+                    Err(_) => {
+                        // Failed to decrypt, assume it is legacy plaintext key.
+                        // Re-encrypt it and save back to database (one-time compatibility shim)
+                        if let Ok(encrypted) = crate::auth::encrypt_subsonic_password(&secret_key_db, jwt_secret) {
+                            let _ = sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ('s3_secret_key', ?)")
+                                .bind(encrypted)
+                                .execute(pool)
+                                .await;
+                        }
+                        secret_key_db
+                    }
+                }
+            };
 
             match crate::storage::build_s3_client(
                 &endpoint,
@@ -141,7 +160,7 @@ impl AppState {
     }
 
     pub async fn reload_storage_backend(&self) {
-        let new_backend = Self::load_storage_backend_from_db(&self.pool, &self.config.data_dir).await;
+        let new_backend = Self::load_storage_backend_from_db(&self.pool, &self.config.data_dir, &self.config.jwt_secret).await;
         let mut w = self.storage_backend.write().await;
         *w = new_backend;
     }

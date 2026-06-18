@@ -37,16 +37,18 @@ Locate the docker-compose.yml file in the audion-server-docker directory. It def
 audion-server (Rust backend listening on port 8080)
 audion-frontend (Nginx + Svelte 5 frontend listening on port 80)
 Edit the environment variables in your docker-compose.yml file to secure your setup:
-yaml
+```yaml
 environment:
   - AUDION_ADMIN_USER=admin
   - AUDION_ADMIN_PASSWORD=your-secure-password   # Change this!
   - AUDION_JWT_SECRET=your-custom-secure-secret   # Change this!
   - AUDION_PORT=8080
   - AUDION_DATA_DIR=/data
+```
 Run the following command in your terminal to build and start the containers in the background:
-bash
+```bash
 docker compose up --build -d
+```
 Access the web dashboard by opening your browser and navigating to http://localhost (or your machine's IP address) and log in with your configured admin credentials. Here you can upload files and manage playlists.
 Step 2: Connecting the Audion App
 Once your server is running, connecting your desktop app takes seconds:

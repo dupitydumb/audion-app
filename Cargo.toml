@@ -31,6 +31,8 @@ hex = "0.4.3"
 aes-gcm = "0.10.3"
 aws-config = "1.5"
 aws-sdk-s3 = "1.37"
+governor = "0.6"
+tower_governor = "0.4"
 
 
 

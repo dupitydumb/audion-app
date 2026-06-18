@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use serde::{Serialize, Deserialize};
 use sqlx::SqlitePool;
 use tracing::{info, warn, error};
@@ -56,7 +56,7 @@ pub struct TunnelManager {
     pool: SqlitePool,
     state: Arc<Mutex<TunnelStatus>>,
     config: Arc<Mutex<TunnelConfig>>,
-    child_process: Option<Child>,
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     backend_port: u16,
 }
 
@@ -92,7 +92,7 @@ impl TunnelManager {
             pool,
             state: Arc::new(Mutex::new(state)),
             config: Arc::new(Mutex::new(config)),
-            child_process: None,
+            shutdown_tx: None,
             backend_port,
         }
     }
@@ -142,7 +142,7 @@ impl TunnelManager {
     pub async fn toggle(&mut self) -> Result<TunnelStatus, String> {
         let mut config = self.config.lock().unwrap().clone();
         
-        if self.child_process.is_some() {
+        if self.shutdown_tx.is_some() {
             // Stop active tunnel
             info!("Stopping tunnel process...");
             self.stop_internal().await;
@@ -183,8 +183,10 @@ impl TunnelManager {
     }
 
     async fn stop_internal(&mut self) {
-        if let Some(mut child) = self.child_process.take() {
-            let _ = child.kill().await;
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+            // Give the process a moment to cleanup
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
 
         let mut st = self.state.lock().unwrap();
@@ -224,7 +226,7 @@ impl TunnelManager {
 
         let state_clone = self.state.clone();
 
-        match config.provider {
+        let mut child = match config.provider {
             TunnelProvider::LocalhostRun => {
                 let target = format!("{}:{}", target_host, target_port);
                 let ssh_args = vec![
@@ -248,9 +250,9 @@ impl TunnelManager {
                     .map_err(|e| format!("Failed to execute ssh command: {}. Make sure OpenSSH client is installed.", e))?;
 
                 let stdout = child.stdout.take().ok_or_else(|| "Failed to capture ssh stdout".to_string())?;
-                self.child_process = Some(child);
 
                 // Start background stdout reader
+                let state_clone_inner = state_clone.clone();
                 tokio::spawn(async move {
                     let mut reader = BufReader::new(stdout).lines();
                     while let Ok(Some(line)) = reader.next_line().await {
@@ -258,7 +260,7 @@ impl TunnelManager {
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
                             if let Some(address) = val.get("address").and_then(|v| v.as_str()) {
                                 info!("Tunnel successfully opened! Public URL: https://{}", address);
-                                let mut st = state_clone.lock().unwrap();
+                                let mut st = state_clone_inner.lock().unwrap();
                                 st.url = Some(format!("https://{}", address));
                                 st.active = true;
                                 st.is_connecting = false;
@@ -268,6 +270,8 @@ impl TunnelManager {
                         }
                     }
                 });
+
+                child
             }
             TunnelProvider::Ngrok => {
                 let token = config.token.clone().ok_or_else(|| "Ngrok Authtoken is required".to_string())?;
@@ -286,17 +290,35 @@ impl TunnelManager {
 
                 info!("Executing command: ngrok {}", ngrok_args.join(" "));
 
-                let child = Command::new("ngrok")
+                let mut child = Command::new("ngrok")
                     .args(&ngrok_args)
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
                     .kill_on_drop(true)
                     .spawn()
                     .map_err(|e| format!("Failed to execute ngrok binary: {}. Make sure it is installed and in system PATH.", e))?;
 
-                self.child_process = Some(child);
+                let stdout = child.stdout.take().ok_or_else(|| "Failed to capture ngrok stdout".to_string())?;
+                let stderr = child.stderr.take().ok_or_else(|| "Failed to capture ngrok stderr".to_string())?;
+
+                // Log ngrok stdout in background
+                tokio::spawn(async move {
+                    let mut reader = BufReader::new(stdout).lines();
+                    while let Ok(Some(line)) = reader.next_line().await {
+                        info!("ngrok: {}", line);
+                    }
+                });
+
+                // Log ngrok stderr in background
+                tokio::spawn(async move {
+                    let mut reader = BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = reader.next_line().await {
+                        warn!("ngrok stderr: {}", line);
+                    }
+                });
 
                 // Query ngrok's local API to retrieve the tunnel URL
+                let state_clone_inner = state_clone.clone();
                 tokio::spawn(async move {
                     let client = reqwest::Client::new();
                     let mut attempts = 0;
@@ -304,8 +326,16 @@ impl TunnelManager {
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         attempts += 1;
 
-                        if attempts > 15 {
-                            let mut st = state_clone.lock().unwrap();
+                        // Check if the process exited or connection was aborted
+                        {
+                            let st = state_clone_inner.lock().unwrap();
+                            if !st.is_connecting {
+                                break;
+                            }
+                        }
+
+                        if attempts > 60 {
+                            let mut st = state_clone_inner.lock().unwrap();
                             st.error = Some("Failed to retrieve ngrok public URL. Check authtoken validity or logs.".to_string());
                             st.is_connecting = false;
                             st.active = false;
@@ -317,7 +347,7 @@ impl TunnelManager {
                                 if let Ok(json_res) = res.json::<NgrokTunnelsResponse>().await {
                                     if let Some(t) = json_res.tunnels.first() {
                                         info!("Ngrok tunnel successfully opened! Public URL: {}", t.public_url);
-                                        let mut st = state_clone.lock().unwrap();
+                                        let mut st = state_clone_inner.lock().unwrap();
                                         st.url = Some(t.public_url.clone());
                                         st.active = true;
                                         st.is_connecting = false;
@@ -332,6 +362,8 @@ impl TunnelManager {
                         }
                     }
                 });
+
+                child
             }
             TunnelProvider::Cloudflare => {
                 let token = config.token.clone().ok_or_else(|| "Cloudflare Tunnel Token is required".to_string())?;
@@ -357,8 +389,6 @@ impl TunnelManager {
                     .spawn()
                     .map_err(|e| format!("Failed to execute cloudflared binary: {}. Make sure it is installed and in system PATH.", e))?;
 
-                self.child_process = Some(child);
-
                 // Cloudflare relies on the custom domain configured in Zero Trust console.
                 // We display the configured custom domain.
                 let custom_domain = config.custom_domain.clone().unwrap_or_default();
@@ -372,23 +402,41 @@ impl TunnelManager {
 
                 // Assume connection is successful if the process doesn't immediately crash.
                 // We wait 1.5s to see if it dies, then mark it active.
+                let state_clone_inner = state_clone.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_secs(2)).await;
-                    let mut st = state_clone.lock().unwrap();
+                    let mut st = state_clone_inner.lock().unwrap();
                     st.url = Some(display_url);
                     st.active = true;
                     st.is_connecting = false;
                     st.error = None;
                 });
-            }
-        }
 
-        // Spawn monitor task to watch the child process exit
+                child
+            }
+        };
+
+        // Spawn monitor task to watch the child process exit or shutdown request
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
+        self.shutdown_tx = Some(tx);
+
         let state_monitor = self.state.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            // A simple placeholder to monitor if process dies, in real usage we would join/select the child exit.
-            // However, this is robust enough for typical scenarios or can be expanded if needed.
+            tokio::select! {
+                _ = &mut rx => {
+                    info!("Tunnel shutdown signal received. Terminating child process.");
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                }
+                exit_status = child.wait() => {
+                    info!("Tunnel child process exited: {:?}", exit_status);
+                    let mut st = state_monitor.lock().unwrap();
+                    st.active = false;
+                    st.url = None;
+                    st.is_connecting = false;
+                    st.error = Some("Tunnel process exited unexpectedly. Check token / provider settings.".to_string());
+                }
+            }
         });
 
         Ok(())

@@ -5,6 +5,7 @@ A lightweight, self-hosted audio streaming server written in Rust with a modern,
 ![Rust](https://img.shields.io/badge/rust-%23E34F26.svg?style=for-the-badge&logo=rust&logoColor=white)
 ![Svelte](https://img.shields.io/badge/svelte-%23FF3E00.svg?style=for-the-badge&logo=svelte&logoColor=white)
 ![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-yellow.svg?style=for-the-badge)
 
 ---
 
@@ -19,6 +20,22 @@ A lightweight, self-hosted audio streaming server written in Rust with a modern,
 *   **Real-Time Client Sync**: Uses Server-Sent Events (SSE) to broadcast library updates (e.g. `track.added`, `track.deleted`) to keep client interfaces synchronized.
 *   **Secure Authentication**: JWT-based authentication system with auto-bootstrapping for the administrator user.
 *   **Subsonic Client Support**: Exposes a standard Subsonic-compliant API (under `/rest/`) for compatibility with external music streaming applications on Android, iOS, and Desktop.
+
+---
+
+## ❓ Why Audion?
+
+Audion is built to be a fast, modern, and lightweight audio streaming server that is highly responsive and easy to deploy. Here is how it compares to other popular self-hosted audio solutions:
+
+| Feature | **Audion Server** | Navidrome | Jellyfin |
+| :--- | :---: | :---: | :---: |
+| **Lightweight Rust Engine** | **✅ Yes** | ❌ No (Go) | ❌ No (C#/.NET) |
+| **Modern Svelte v5 UI** | **✅ Yes** | ❌ No (React) | ❌ No (Vue/Vanilla JS) |
+| **Content-Based Deduplication** | **✅ Yes** | ❌ No | ❌ No |
+| **Auto-Sync'd Lyrics (LRCLIB)** | **✅ Yes** | ⚠️ Limited | ⚠️ Plugin-dependent |
+| **Real-Time Client Sync (SSE)** | **✅ Yes** | ❌ No | ✅ Yes (Websockets) |
+| **Subsonic API Support** | **✅ Yes** | ✅ Yes | ⚠️ Plugin-dependent |
+| **Automated Metadata Scanning** | **✅ Yes** | ✅ Yes | ✅ Yes |
 
 ---
 
@@ -65,39 +82,18 @@ Audion Server is configured using environment variables. When starting, the back
 
 Audion Server comes with a preconfigured `docker-compose.yml` for multi-container orchestration.
 
-1.  **Verify or Edit `docker-compose.yml`**
-    Ensure the ports are mapped correctly on your host machine. For example, to expose the frontend on port `80` and the backend on `8080`, check or edit `docker-compose.yml` to specify:
-    ```yaml
-    version: '3.8'
-
-    services:
-      audion-server:
-        build:
-          context: .
-          dockerfile: Dockerfile
-        ports:
-          - "8080:8080" # Map backend port to host
-        volumes:
-          - ./data:/data
-        environment:
-          - AUDION_ADMIN_USER=admin
-          - AUDION_ADMIN_PASSWORD=securepasswordhere # Change this!
-          - AUDION_JWT_SECRET=use-a-strong-jwt-secret-here # Change this!
-          - AUDION_DATA_DIR=/data
-          - AUDION_PORT=8080
-          - RUST_LOG=info
-        restart: unless-stopped
-
-      audion-frontend:
-        build:
-          context: ./frontend
-          dockerfile: Dockerfile
-        ports:
-          - "80:80" # Map frontend port to host
-        depends_on:
-          - audion-server
-        restart: unless-stopped
+1.  **Configure Environment Variables**
+    Copy the `.env.example` file to `.env` in the root directory:
+    ```bash
+    cp .env.example .env
     ```
+    Open the newly created `.env` file in a text editor and configure your secrets:
+    *   Set `AUDION_ADMIN_PASSWORD` to a strong administrator password.
+    *   Generate a secure, unique `AUDION_JWT_SECRET` key using:
+        ```bash
+        openssl rand -hex 32
+        ```
+        And copy the generated hex string into the `AUDION_JWT_SECRET` field in `.env`.
 
 2.  **Start the Containers**
     Run the following command in the root directory:

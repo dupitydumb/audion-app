@@ -99,9 +99,23 @@ pub async fn update_storage_settings(
         let force_path_style = payload.s3_force_path_style.unwrap_or(false);
 
         // Retrieve existing secret key from DB if the payload contains the mask "********"
-        let secret_key = match payload.s3_secret_key.as_deref() {
-            Some("********") | None => get_db_setting(&state.pool, "s3_secret_key").await,
-            Some(s) => s.to_string(),
+        let is_new_key = match payload.s3_secret_key.as_deref() {
+            Some("********") | None => false,
+            _ => true,
+        };
+
+        let secret_key = if is_new_key {
+            payload.s3_secret_key.clone().unwrap_or_default()
+        } else {
+            let db_val = get_db_setting(&state.pool, "s3_secret_key").await;
+            if db_val.is_empty() {
+                "".to_string()
+            } else {
+                match crate::auth::decrypt_subsonic_password(&db_val, &state.config.jwt_secret) {
+                    Ok(decrypted) => decrypted,
+                    Err(_) => db_val, // Fallback to plaintext if decryption fails (migration path)
+                }
+            }
         };
 
         if bucket.trim().is_empty() {
@@ -164,7 +178,9 @@ pub async fn update_storage_settings(
     }
     if let Some(secret_key) = payload.s3_secret_key {
         if secret_key != "********" {
-            save_db_setting(&state.pool, "s3_secret_key", &secret_key).await;
+            let encrypted_key = crate::auth::encrypt_subsonic_password(&secret_key, &state.config.jwt_secret)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to encrypt S3 secret key: {}", e)))?;
+            save_db_setting(&state.pool, "s3_secret_key", &encrypted_key).await;
         }
     }
     if let Some(region) = payload.s3_region {
