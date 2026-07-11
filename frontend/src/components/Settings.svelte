@@ -677,7 +677,9 @@
     s3_access_key: '',
     s3_secret_key: '',
     s3_region: '',
-    s3_force_path_style: false
+    s3_force_path_style: false,
+    azure_connection_string: '',
+    azure_container: ''
   });
   let isTestingStorage = $state(false);
   let isSavingStorage = $state(false);
@@ -710,7 +712,7 @@
         addToast('S3 storage connection test succeeded!', 'success');
       } else {
         const text = await res.text();
-        throw new Error(text || 'Connection test failed');
+        throw new Error(`[${res.status}] ${text || 'Connection test failed'}`);
       }
     } catch (err: any) {
       addToast(err.message || 'Connection test failed', 'error');
@@ -1686,10 +1688,19 @@
                 id="storage-type" 
                 class="form-input" 
                 bind:value={storageConfig.storage_type}
+                onchange={(e) => {
+                  if (e.currentTarget.value === 'gcs') {
+                    storageConfig.s3_endpoint = 'https://storage.googleapis.com';
+                    storageConfig.s3_region = 'auto';
+                    storageConfig.s3_force_path_style = false;
+                  }
+                }}
                 style="width: 100%; height: auto; padding: 0.5rem 0.75rem;"
               >
                 <option value="local">Local Host File System (Default)</option>
                 <option value="s3">S3-Compatible Object Storage (AWS, MinIO, Cloudflare R2, etc.)</option>
+                <option value="gcs">Google Cloud Storage (GCS via S3 XML API)</option>
+                <option value="azure">Azure Blob Storage</option>
               </select>
             </div>
 
@@ -1699,7 +1710,7 @@
               </div>
             {/if}
 
-            {#if storageConfig.storage_type === 's3'}
+            {#if storageConfig.storage_type === 's3' || storageConfig.storage_type === 'gcs'}
               <div style="display: flex; flex-direction: column; gap: 1rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 1rem;">
                 
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
@@ -1727,7 +1738,7 @@
                       style="width: 100%;" 
                       placeholder="my-music-bucket" 
                       bind:value={storageConfig.s3_bucket}
-                      required={storageConfig.storage_type === 's3'}
+                      required={storageConfig.storage_type === 's3' || storageConfig.storage_type === 'gcs'}
                     />
                   </div>
                 </div>
@@ -1793,11 +1804,64 @@
                   </ul>
                 </div>
 
+                {#if storageConfig.storage_type === 'gcs'}
+                  <div style="background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; padding: 0.9rem 1rem; font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5; margin-top: 1rem;">
+                    <strong style="color: #60a5fa;">☁ Google Cloud Storage Quick Setup:</strong>
+                    <ul style="margin: 0.4rem 0 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.2rem;">
+                      <li><strong>Endpoint:</strong> <code style="background: rgba(0,0,0,0.3); padding: 0.1rem 0.3rem;">https://storage.googleapis.com</code></li>
+                      <li><strong>Region:</strong> <code style="background: rgba(0,0,0,0.3); padding: 0.1rem 0.3rem;">auto</code> or leave empty</li>
+                      <li><strong>Force Path-Style Access:</strong> should be <strong>disabled</strong> (GCS S3 API uses virtual-hosted style)</li>
+                      <li>Use GCS <strong>HMAC Keys</strong> (interoperability keys) for Access Key / Secret Key.</li>
+                    </ul>
+                  </div>
+                {/if}
+
+              </div>
+            {/if}
+
+            {#if storageConfig.storage_type === 'azure'}
+              <div style="display: flex; flex-direction: column; gap: 1rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 1rem;">
+                
+                <div class="form-group">
+                  <label class="form-label" for="azure-conn">Connection String <span style="color: var(--danger);">*</span></label>
+                  <input 
+                    type="password" 
+                    id="azure-conn" 
+                    class="form-input" 
+                    style="width: 100%;" 
+                    placeholder={storageConfig.azure_connection_string ? "********" : "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net"}
+                    bind:value={storageConfig.azure_connection_string}
+                    required={storageConfig.storage_type === 'azure'}
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="azure-container">Container Name <span style="color: var(--danger);">*</span></label>
+                  <input 
+                    type="text" 
+                    id="azure-container" 
+                    class="form-input" 
+                    style="width: 100%;" 
+                    placeholder="my-music-container" 
+                    bind:value={storageConfig.azure_container}
+                    required={storageConfig.storage_type === 'azure'}
+                  />
+                </div>
+
+                <div style="background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; padding: 0.9rem 1rem; font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5;">
+                  <strong style="color: #60a5fa;">🔷 Azure Blob Storage Quick Setup:</strong>
+                  <ul style="margin: 0.4rem 0 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.2rem;">
+                    <li>Create a storage account in the Azure portal.</li>
+                    <li>Go to <strong>Security + networking</strong> &rarr; <strong>Access keys</strong> and copy the <strong>Connection string</strong>.</li>
+                    <li>Create a <strong>Container</strong> (e.g. `music`) and ensure the server has permissions to access it.</li>
+                  </ul>
+                </div>
+
               </div>
             {/if}
 
             <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 1rem;">
-              {#if storageConfig.storage_type === 's3'}
+              {#if storageConfig.storage_type === 's3' || storageConfig.storage_type === 'gcs' || storageConfig.storage_type === 'azure'}
                 <button 
                   type="button" 
                   onclick={handleTestStorageConnection} 

@@ -97,7 +97,7 @@ impl AppState {
             .flatten()
             .unwrap_or_else(|| "local".to_string());
 
-        if storage_type == "s3" {
+        if storage_type == "s3" || storage_type == "gcs" {
             let endpoint = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_endpoint'")
                 .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
             let bucket = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 's3_bucket'")
@@ -147,6 +147,41 @@ impl AppState {
                 },
                 Err(e) => {
                     tracing::error!("Failed to build S3 storage backend: {}. Falling back to local.", e);
+                    crate::storage::StorageBackend::Local {
+                        data_dir: data_dir.to_path_buf(),
+                    }
+                }
+            }
+        } else if storage_type == "azure" {
+            let container = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 'azure_container'")
+                .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
+            let conn_str_db = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 'azure_connection_string'")
+                .fetch_optional(pool).await.ok().flatten().unwrap_or_default();
+
+            let conn_str = if conn_str_db.is_empty() {
+                "".to_string()
+            } else {
+                match crate::auth::decrypt_subsonic_password(&conn_str_db, jwt_secret) {
+                    Ok(decrypted) => decrypted,
+                    Err(_) => {
+                        if let Ok(encrypted) = crate::auth::encrypt_subsonic_password(&conn_str_db, jwt_secret) {
+                            let _ = sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ('azure_connection_string', ?)")
+                                .bind(encrypted)
+                                .execute(pool)
+                                .await;
+                        }
+                        conn_str_db
+                    }
+                }
+            };
+
+            match crate::storage::build_azure_client(&conn_str) {
+                Ok(client) => crate::storage::StorageBackend::Azure {
+                    client,
+                    container,
+                },
+                Err(e) => {
+                    tracing::error!("Failed to build Azure storage backend: {}. Falling back to local.", e);
                     crate::storage::StorageBackend::Local {
                         data_dir: data_dir.to_path_buf(),
                     }

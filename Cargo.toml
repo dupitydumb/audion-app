@@ -33,6 +33,9 @@ aws-config = "1.5"
 aws-sdk-s3 = "1.37"
 governor = "0.6"
 tower_governor = "0.4"
+azure_storage_blobs = "0.21.0"
+azure_core = "0.21.0"
+
 
 
 

@@ -3,6 +3,7 @@ use std::time::Duration;
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::Credentials;
 use aws_sdk_s3::config::Region;
+use aws_sdk_s3::config::retry::RetryConfig;
 use aws_sdk_s3::presigning::PresigningConfig;
 use aws_config::timeout::TimeoutConfig;
 use tracing::info;
@@ -16,6 +17,10 @@ pub enum StorageBackend {
         client: Client,
         bucket: String,
         endpoint_url: String,
+    },
+    Azure {
+        client: azure_storage_blobs::prelude::BlobServiceClient,
+        container: String,
     },
 }
 
@@ -43,6 +48,16 @@ impl StorageBackend {
                     .map_err(|e| format!("S3 put_object error: {:?}", e))?;
                 Ok(())
             }
+            Self::Azure { client, container } => {
+                let container_client = client.container_client(container);
+                let blob_client = container_client.blob_client(&key);
+                blob_client
+                    .put_block_blob(data)
+                    .content_type(content_type)
+                    .await
+                    .map_err(|e| format!("Azure put_object error: {:?}", e))?;
+                Ok(())
+            }
         }
     }
 
@@ -66,6 +81,16 @@ impl StorageBackend {
                     .to_vec();
                 Ok(bytes)
             }
+            Self::Azure { client, container } => {
+                let container_client = client.container_client(container);
+                let blob_client = container_client.blob_client(&key);
+                let response = blob_client.get().await
+                    .map_err(|e| format!("Azure get_object error: {:?}", e))?;
+                let bytes = response.into_body().collect().await
+                    .map_err(|e| format!("Azure body stream read error: {:?}", e))?
+                    .to_vec();
+                Ok(bytes)
+            }
         }
     }
 
@@ -86,9 +111,12 @@ impl StorageBackend {
                     .map_err(|e| format!("S3 presign error: {:?}", e))?;
                 Ok(req.uri().to_string())
             }
+            Self::Azure { .. } => {
+                Err("Presigned URL is not supported for Azure storage".to_string())
+            }
         }
     }
-
+ 
     pub async fn delete_object(&self, key: &str) -> Result<(), String> {
         let key = key.replace("\\", "/");
         match self {
@@ -106,6 +134,15 @@ impl StorageBackend {
                     .send()
                     .await
                     .map_err(|e| format!("S3 delete_object error: {:?}", e))?;
+                Ok(())
+            }
+            Self::Azure { client, container } => {
+                let container_client = client.container_client(container);
+                let blob_client = container_client.blob_client(&key);
+                blob_client
+                    .delete()
+                    .await
+                    .map_err(|e| format!("Azure delete_object error: {:?}", e))?;
                 Ok(())
             }
         }
@@ -135,6 +172,7 @@ pub fn build_s3_client(
     );
 
     let mut config_builder = aws_sdk_s3::config::Builder::new()
+        .behavior_version_latest()
         .credentials_provider(credentials)
         .region(Region::new(region.to_string()))
         .timeout_config(
@@ -159,3 +197,59 @@ pub fn build_s3_client(
 
     Ok(Client::from_conf(config_builder.build()))
 }
+
+/// S3 client for test-connection only: no retries, tight timeouts so we fail
+/// fast instead of letting the reverse proxy 502 on us.
+pub fn build_s3_client_no_retry(
+    endpoint: &str,
+    bucket: &str,
+    access_key: &str,
+    secret_key: &str,
+    region: &str,
+    force_path_style: bool,
+) -> Result<Client, String> {
+    let region = if region.trim().is_empty() {
+        "us-east-1"
+    } else {
+        region
+    };
+
+    let credentials = Credentials::new(
+        access_key.trim(),
+        secret_key.trim(),
+        None,
+        None,
+        "static-credentials"
+    );
+
+    let mut config_builder = aws_sdk_s3::config::Builder::new()
+        .behavior_version_latest()
+        .credentials_provider(credentials)
+        .region(Region::new(region.to_string()))
+        .retry_config(RetryConfig::disabled())
+        .timeout_config(
+            TimeoutConfig::builder()
+                .connect_timeout(Duration::from_secs(8))
+                .read_timeout(Duration::from_secs(8))
+                .operation_timeout(Duration::from_secs(10))
+                .build()
+        );
+
+    if !endpoint.trim().is_empty() {
+        config_builder = config_builder.endpoint_url(endpoint.trim());
+    }
+
+    if force_path_style {
+        config_builder = config_builder.force_path_style(true);
+    }
+
+    Ok(Client::from_conf(config_builder.build()))
+}
+
+pub fn build_azure_client(
+    connection_string: &str,
+) -> Result<azure_storage_blobs::prelude::BlobServiceClient, String> {
+    azure_storage_blobs::prelude::BlobServiceClient::new_connection_string(connection_string.trim())
+        .map_err(|e| format!("Azure client initialization error: {:?}", e))
+}
+
