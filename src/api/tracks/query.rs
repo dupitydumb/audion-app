@@ -71,25 +71,9 @@ pub async fn delete_track_inner(
     // Delete files
     {
         let storage = state.storage_backend.read().await;
-        match &*storage {
-            crate::storage::StorageBackend::Local { .. } => {
-                let full_track_path = state.config.data_dir.join(&path_val);
-                if full_track_path.exists() {
-                    let _ = std::fs::remove_file(full_track_path);
-                }
-                if let Some(ref cover_path) = cover_path_val {
-                    let full_cover_path = state.config.data_dir.join(cover_path);
-                    if full_cover_path.exists() {
-                        let _ = std::fs::remove_file(full_cover_path);
-                    }
-                }
-            }
-            crate::storage::StorageBackend::S3 { .. } => {
-                let _ = storage.delete_object(&path_val).await;
-                if let Some(ref cover_path) = cover_path_val {
-                    let _ = storage.delete_object(cover_path).await;
-                }
-            }
+        let _ = storage.delete_object(&path_val).await;
+        if let Some(ref cover_path) = cover_path_val {
+            let _ = storage.delete_object(cover_path).await;
         }
     }
     let transcoded_path = state.config.data_dir.join("transcoded").join(format!("{}.mp3", id));

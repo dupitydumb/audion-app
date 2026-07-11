@@ -7,6 +7,7 @@ use aws_sdk_s3::config::retry::RetryConfig;
 use aws_sdk_s3::presigning::PresigningConfig;
 use aws_config::timeout::TimeoutConfig;
 use tracing::info;
+use futures::StreamExt;
 
 #[derive(Clone, Debug)]
 pub enum StorageBackend {
@@ -53,14 +54,15 @@ impl StorageBackend {
                 let blob_client = container_client.blob_client(&key);
                 blob_client
                     .put_block_blob(data)
-                    .content_type(content_type)
+                    .content_type(content_type.to_string())
+                    .into_future()
                     .await
-                    .map_err(|e| format!("Azure put_object error: {:?}", e))?;
+                    .map_err(|e| format!("Azure put_object error: {}", e))?;
                 Ok(())
             }
         }
     }
-
+ 
     pub async fn get_object(&self, key: &str) -> Result<Vec<u8>, String> {
         let key = key.replace("\\", "/");
         match self {
@@ -84,12 +86,15 @@ impl StorageBackend {
             Self::Azure { client, container } => {
                 let container_client = client.container_client(container);
                 let blob_client = container_client.blob_client(&key);
-                let response = blob_client.get().await
-                    .map_err(|e| format!("Azure get_object error: {:?}", e))?;
-                let bytes = response.into_body().collect().await
-                    .map_err(|e| format!("Azure body stream read error: {:?}", e))?
-                    .to_vec();
-                Ok(bytes)
+                let mut stream = blob_client.get().into_stream();
+                let mut all_bytes: Vec<u8> = Vec::new();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|e| format!("Azure get_object error: {}", e))?;
+                    let data = chunk.data.collect().await
+                        .map_err(|e| format!("Azure body read error: {}", e))?;
+                    all_bytes.extend_from_slice(data.as_ref());
+                }
+                Ok(all_bytes)
             }
         }
     }
@@ -141,8 +146,9 @@ impl StorageBackend {
                 let blob_client = container_client.blob_client(&key);
                 blob_client
                     .delete()
+                    .into_future()
                     .await
-                    .map_err(|e| format!("Azure delete_object error: {:?}", e))?;
+                    .map_err(|e| format!("Azure delete_object error: {}", e))?;
                 Ok(())
             }
         }
@@ -249,7 +255,15 @@ pub fn build_s3_client_no_retry(
 pub fn build_azure_client(
     connection_string: &str,
 ) -> Result<azure_storage_blobs::prelude::BlobServiceClient, String> {
-    azure_storage_blobs::prelude::BlobServiceClient::new_connection_string(connection_string.trim())
-        .map_err(|e| format!("Azure client initialization error: {:?}", e))
+    use azure_storage::ConnectionString;
+    use azure_storage_blobs::prelude::ClientBuilder;
+    let conn = connection_string.trim();
+    let cs = ConnectionString::new(conn)
+        .map_err(|e| format!("Azure connection string parse error: {}", e))?;
+    let account = cs.account_name
+        .ok_or_else(|| "Azure connection string missing AccountName".to_string())?;
+    let credentials = cs.storage_credentials()
+        .map_err(|e| format!("Azure credentials error: {}", e))?;
+    Ok(ClientBuilder::new(account, credentials).blob_service_client())
 }
 

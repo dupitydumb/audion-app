@@ -86,22 +86,17 @@ pub async fn stream_track(
     };
 
     let storage = state.storage_backend.read().await;
-    let is_s3 = matches!(&*storage, crate::storage::StorageBackend::S3 { .. });
+    let is_remote = matches!(&*storage, crate::storage::StorageBackend::S3 { .. } | crate::storage::StorageBackend::Azure { .. });
+    let is_s3 = is_remote;
     let needs_transcode = format.as_deref().map(|f| f.to_lowercase()) == Some("flac".to_string()) && state.has_ffmpeg;
 
-    if is_s3 && !needs_transcode {
-        match storage.get_presigned_url(&path, 3600).await {
-            Ok(url) => {
-                return Response::builder()
-                    .status(StatusCode::FOUND)
-                    .header(header::LOCATION, url)
-                    .body(Body::empty())
-                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
-            }
-            Err(e) => {
-                tracing::error!("Failed to generate presigned URL: {}", e);
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
+    if is_remote && !needs_transcode {
+        if let Ok(url) = storage.get_presigned_url(&path, 3600).await {
+            return Response::builder()
+                .status(StatusCode::FOUND)
+                .header(header::LOCATION, url)
+                .body(Body::empty())
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
         }
     }
 
@@ -294,6 +289,22 @@ pub async fn get_track_cover(
                     }
                 }
             }
+            crate::storage::StorageBackend::Azure { .. } => {
+                // Azure: download and serve directly (no SAS URL support)
+                match storage.get_object(path).await {
+                    Ok(bytes) => {
+                        let mime = mime_guess::from_path(path).first_or(mime_guess::mime::IMAGE_JPEG);
+                        return (
+                            StatusCode::OK,
+                            [(header::CONTENT_TYPE, mime.to_string())],
+                            bytes,
+                        ).into_response();
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to fetch Azure cover: {}", e);
+                    }
+                }
+            }
         }
     }
 
@@ -327,7 +338,7 @@ pub async fn stream_track_subsonic(
     };
 
     let storage = state.storage_backend.read().await;
-    let is_s3 = matches!(&*storage, crate::storage::StorageBackend::S3 { .. });
+    let is_s3 = matches!(&*storage, crate::storage::StorageBackend::S3 { .. } | crate::storage::StorageBackend::Azure { .. });
 
     // Determine if transcoding is requested
     let mut needs_transcode = false;

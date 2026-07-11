@@ -190,15 +190,7 @@ pub async fn upload_track(
         let relative_cover = format!("users/{}/artwork/track_{}.jpg", claims.sub, track_id);
         let write_success = {
             let storage = state.storage_backend.read().await;
-            match &*storage {
-                crate::storage::StorageBackend::Local { .. } => {
-                    let cover_full = state.config.data_dir.join(&relative_cover);
-                    std::fs::write(&cover_full, cover_data).is_ok()
-                }
-                crate::storage::StorageBackend::S3 { .. } => {
-                    storage.put_object(&relative_cover, cover_data.clone(), "image/jpeg").await.is_ok()
-                }
-            }
+            storage.put_object(&relative_cover, cover_data.clone(), "image/jpeg").await.is_ok()
         };
         if write_success {
             sqlx::query("UPDATE tracks SET track_cover_path = ? WHERE id = ?")
@@ -224,15 +216,7 @@ pub async fn upload_track(
                 let relative_art = format!("users/{}/artwork/album_{}.jpg", claims.sub, alb_id);
                 let write_success = {
                     let storage = state.storage_backend.read().await;
-                    match &*storage {
-                        crate::storage::StorageBackend::Local { .. } => {
-                            let art_full = state.config.data_dir.join(&relative_art);
-                            std::fs::write(&art_full, art_data).is_ok()
-                        }
-                        crate::storage::StorageBackend::S3 { .. } => {
-                            storage.put_object(&relative_art, art_data.clone(), "image/jpeg").await.is_ok()
-                        }
-                    }
+                    storage.put_object(&relative_art, art_data.clone(), "image/jpeg").await.is_ok()
                 };
                 if write_success {
                     sqlx::query("UPDATE albums SET art_path = ? WHERE id = ?")
