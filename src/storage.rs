@@ -17,7 +17,7 @@ pub enum StorageBackend {
     S3 {
         client: Client,
         bucket: String,
-        endpoint_url: String,
+        // endpoint_url is baked into the AWS SDK client at build time via config_builder.endpoint_url()
     },
     Azure {
         client: azure_storage_blobs::prelude::BlobServiceClient,

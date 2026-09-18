@@ -91,12 +91,31 @@ pub async fn stream_track(
     let needs_transcode = format.as_deref().map(|f| f.to_lowercase()) == Some("flac".to_string()) && state.has_ffmpeg;
 
     if is_remote && !needs_transcode {
+        // Try presigned redirect first (zero-copy, fastest path)
         if let Ok(url) = storage.get_presigned_url(&path, 3600).await {
             return Response::builder()
                 .status(StatusCode::FOUND)
                 .header(header::LOCATION, url)
                 .body(Body::empty())
                 .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
+        // Presign failed (e.g. Azure, or S3 error) — fall back to proxying bytes through server
+        match storage.get_object(&path).await {
+            Ok(bytes) => {
+                let file_size = bytes.len() as u64;
+                let mime = mime_for_format(format.as_deref());
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_LENGTH, file_size)
+                    .header(header::ACCEPT_RANGES, "none")
+                    .header(header::CONTENT_TYPE, mime)
+                    .body(Body::from(bytes))
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+            }
+            Err(e) => {
+                tracing::error!("Failed to fetch remote object '{}': {}", path, e);
+                return StatusCode::NOT_FOUND.into_response();
+            }
         }
     }
 

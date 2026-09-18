@@ -36,7 +36,7 @@ impl Config {
         let port = std::env::var("AUDION_PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(8080);
+            .unwrap_or(8086);
 
         let public_dir_str = std::env::var("AUDION_PUBLIC_DIR").unwrap_or_else(|_| "./frontend/dist".to_string());
         let public_dir = PathBuf::from(public_dir_str);

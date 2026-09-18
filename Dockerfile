@@ -75,8 +75,9 @@ ENV AUDION_DATA_DIR=/data
 ENV AUDION_PORT=8086
 ENV RUST_LOG=info
 ENV AUDION_ADMIN_USER=admin
-ENV AUDION_ADMIN_PASSWORD=changeme
-ENV AUDION_JWT_SECRET=your-secret-key-here-change-this-in-production
+# SECURITY: Do NOT bake secrets into the image. Set these at runtime via .env or docker run -e.
+# ENV AUDION_ADMIN_PASSWORD and ENV AUDION_JWT_SECRET are intentionally absent here.
+# The server will warn loudly and use safe defaults if they are missing.
 ENV AUDION_JWT_EXPIRATION_DAYS=7
 ENV AUDION_CORS_ORIGIN=*
 ENV AUDION_MAX_BODY_SIZE=262144000

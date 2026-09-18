@@ -143,7 +143,6 @@ impl AppState {
                 Ok(client) => crate::storage::StorageBackend::S3 {
                     client,
                     bucket,
-                    endpoint_url: endpoint,
                 },
                 Err(e) => {
                     tracing::error!("Failed to build S3 storage backend: {}. Falling back to local.", e);

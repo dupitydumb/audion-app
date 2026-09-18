@@ -50,15 +50,18 @@ pub fn create_router(state: AppState) -> Router {
             .allow_methods(Any)
             .allow_headers(Any)
     } else {
-        match cors_origin.parse::<axum::http::HeaderValue>() {
-            Ok(origin) => CorsLayer::new()
-                .allow_origin(origin)
+        // Support comma-separated list of origins: "https://app.example.com,https://admin.example.com"
+        let origins: Vec<axum::http::HeaderValue> = cors_origin
+            .split(',')
+            .filter_map(|o| o.trim().parse::<axum::http::HeaderValue>().ok())
+            .collect();
+        if origins.is_empty() {
+            CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any)
+        } else {
+            CorsLayer::new()
+                .allow_origin(origins)
                 .allow_methods(Any)
-                .allow_headers(Any),
-            Err(_) => CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
+                .allow_headers(Any)
         }
     };
 
@@ -80,6 +83,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/server-info", get(server_info))
         .route("/api/auth/login", post(auth::login).layer(GovernorLayer { config: governor_conf }))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/refresh", post(auth::refresh_token))
         .route("/api/auth/profile", put(auth::update_profile))
         .route("/api/admin/users", get(users::list_users).post(users::create_user))
         .route("/api/admin/users/:id", put(users::update_user).delete(users::delete_user))

@@ -170,10 +170,10 @@ pub async fn update_profile(
             }
             let password_hash = hash_password(p)
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to hash password: {}", e)))?;
-            
+
             let encrypted_subsonic = crate::auth::encrypt_subsonic_password(p, &state.config.jwt_secret)
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to encrypt subsonic password: {}", e)))?;
-            
+
             sqlx::query("UPDATE users SET username = ?, password_hash = ?, subsonic_password = ? WHERE id = ?")
                 .bind(&updated_username)
                 .bind(&password_hash)
@@ -199,7 +199,6 @@ pub async fn update_profile(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
-
     // Generate new token
     let token = generate_token(&user_id, &updated_username, &user.role, &state.config.jwt_secret)
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Token generation failed".to_string()))?;
@@ -215,3 +214,36 @@ pub async fn update_profile(
     }))
 }
 
+/// Refresh a valid (non-expired) token. The caller presents their current JWT;
+/// if it is valid and the account is still active, a fresh token is issued.
+/// On expiry the client must re-login with credentials.
+pub async fn refresh_token(
+    claims: Claims,
+    State(state): State<AppState>,
+) -> Result<Json<LoginResponse>, (StatusCode, &'static str)> {
+    let user = sqlx::query_as::<_, DbUser>(
+        "SELECT id, username, password_hash, role, listenbrainz_token, is_enabled FROM users WHERE id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?
+    .ok_or((StatusCode::UNAUTHORIZED, "User not found"))?;
+
+    if user.is_enabled == 0 {
+        return Err((StatusCode::FORBIDDEN, "Account is disabled."));
+    }
+
+    let token = generate_token(&user.id, &user.username, &user.role, &state.config.jwt_secret)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Token generation failed"))?;
+
+    Ok(Json(LoginResponse {
+        token,
+        user: UserResponse {
+            id: user.id,
+            username: user.username,
+            role: user.role,
+            listenbrainz_token: user.listenbrainz_token,
+        },
+    }))
+}
