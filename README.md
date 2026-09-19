@@ -62,7 +62,7 @@ Audion Server is configured using environment variables. When starting, the back
 
 ### Option 1: Running with Docker (Recommended)
 
-Audion Server comes with a preconfigured `docker-compose.yml` for multi-container orchestration.
+Audion Server comes with a preconfigured `docker-compose.yml` for single-container deployment.
 
 **Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Docker Compose).
 
@@ -85,7 +85,7 @@ Audion Server comes with a preconfigured `docker-compose.yml` for multi-containe
     ```bash
     docker compose up --build -d
     ```
-    This builds the Rust backend and Svelte frontend, then launches both containers. The frontend waits for the backend to be healthy before starting.
+    This builds the Rust backend and Svelte frontend into a single image, then starts one container. nginx serves the frontend on port 80 and proxies `/api/` and `/rest/` to the internal backend.
 
 3.  **Access the application**
 
@@ -139,7 +139,7 @@ cargo run
 ```
 
 > [!NOTE]
-> If you built the frontend using `npm run build`, the Rust server will automatically serve the static files from `./frontend/dist` on `http://localhost:8080` (no Nginx or separate node server required).
+> If you built the frontend using `npm run build`, run the Rust server separately on `http://localhost:8080`. In production, nginx (via Docker) serves the built frontend and proxies the API.
 
 ---
 
@@ -162,10 +162,10 @@ audion-server/
 │   │   ├── components/   # UI Modules (Library, Albums, Artists, Playlists, Player...)
 │   │   ├── App.svelte    # Frontend routing & layout wrapper
 │   │   └── app.css       # Custom Glassmorphism Styles & animations
-│   ├── Dockerfile        # Frontend multi-stage build (Node + Nginx)
-│   └── nginx.conf        # Nginx route router and API reverse-proxy
-├── Dockerfile            # Backend multi-stage build (Slim Debian)
-├── docker-compose.yml    # Combined stack setup
+│   └── Dockerfile        # Standalone frontend image (for development/separate deploy)
+├── Dockerfile            # Full-stack multi-stage build (node + rust + nginx runtime)
+├── nginx.conf            # nginx config — serves SPA, proxies /api/ and /rest/
+├── docker-compose.yml    # Single-container stack setup
 └── Cargo.toml            # Rust dependency manifest
 ```
 
@@ -180,7 +180,7 @@ Audion Server includes a built-in Subsonic-compatible API, allowing you to conne
 
 ### Connection Details
 To connect a Subsonic client to your Audion Server, configure the following connection parameters:
-1.  **Server URL**: `http://<your-server-ip>:<port>` (e.g., `http://localhost:8080`). Do not append `/rest/` as clients append this automatically.
+1.  **Server URL**: `http://<your-server-ip>` (port 80 — e.g., `http://localhost` or `https://music.yourdomain.com`). Do not append `/rest/` as clients append this automatically.
 2.  **Username**: Your Audion username.
 3.  **Password**: Your Audion password.
 

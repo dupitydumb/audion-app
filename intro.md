@@ -33,9 +33,8 @@ Deploying your server and connecting your app is quick and painless. Here is the
 Step 1: Deploying the Audion Server with Docker
 The easiest way to run the server is using Docker Compose.
 
-Locate the docker-compose.yml file in the audion-server-docker directory. It defines two services:
-audion-server (Rust backend listening on port 8080)
-audion-frontend (Nginx + Svelte 5 frontend listening on port 80)
+Locate the docker-compose.yml file in the audion-server-docker directory. It defines a single service:
+audion (nginx + Svelte 5 frontend + Rust backend — all in one container on port 80)
 Edit the environment variables in your docker-compose.yml file to secure your setup:
 yaml
 environment:
@@ -55,7 +54,7 @@ Open your Audion app.
 Navigate to the Connect / Sync panel.
 Under server settings, select Self-Hosted / Custom Server.
 Enter your credentials:
-Server URL: http://<YOUR_SERVER_IP>:8080 (use the backend port 8080 for API connection)
+Server URL: http://<YOUR_SERVER_IP> (port 80 — or your custom domain if deployed with a reverse proxy)
 Username: (The AUDION_ADMIN_USER you configured)
 Password: (The AUDION_ADMIN_PASSWORD you configured)
 Click Connect Server.
