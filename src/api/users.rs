@@ -35,19 +35,11 @@ pub struct UpdateUserRequest {
     pub is_enabled: Option<i32>,
 }
 
-// Check if requester has Admin role
-fn require_admin(claims: &Claims) -> Result<(), (StatusCode, &'static str)> {
-    if claims.role != "Admin" {
-        return Err((StatusCode::FORBIDDEN, "Administrator privileges required"));
-    }
-    Ok(())
-}
-
 pub async fn list_users(
     claims: Claims,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<UserInfo>>, (StatusCode, &'static str)> {
-    require_admin(&claims)?;
+    claims.require_admin()?;
 
     let users = sqlx::query_as::<_, UserInfo>(
         "SELECT id, username, role, listenbrainz_token, is_enabled, created_at FROM users ORDER BY username ASC"
@@ -64,7 +56,7 @@ pub async fn create_user(
     State(state): State<AppState>,
     Json(payload): Json<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<UserInfo>), (StatusCode, String)> {
-    require_admin(&claims).map_err(|(s, m)| (s, m.to_string()))?;
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
 
     if payload.username.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "Username cannot be empty".to_string()));
@@ -129,7 +121,7 @@ pub async fn update_user(
 ) -> Result<Json<UserInfo>, (StatusCode, String)> {
     // A user can update their own ListenBrainz token, but other changes require admin
     if claims.sub != id {
-        require_admin(&claims).map_err(|(s, m)| (s, m.to_string()))?;
+        claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
     }
 
     // Standard users are only allowed to update their listenbrainz_token
@@ -179,6 +171,16 @@ pub async fn update_user(
             let valid_roles = vec!["Admin", "User", "StreamOnly"];
             if !valid_roles.contains(&r.as_str()) {
                 return Err((StatusCode::BAD_REQUEST, "Invalid role specified".to_string()));
+            }
+            // Prevent self-demotion if last admin
+            if id == claims.sub && current_user.role == "Admin" && r != "Admin" {
+                let admin_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'Admin'")
+                    .fetch_one(&state.pool)
+                    .await
+                    .unwrap_or(0);
+                if admin_count <= 1 {
+                    return Err((StatusCode::BAD_REQUEST, "Cannot demote the only administrator account".to_string()));
+                }
             }
             r.clone()
         } else {
@@ -263,10 +265,36 @@ pub async fn delete_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    require_admin(&claims).map_err(|(s, m)| (s, m.to_string()))?;
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
 
     if id == claims.sub {
         return Err((StatusCode::BAD_REQUEST, "You cannot delete your own account".to_string()));
+    }
+
+    // Guard: fetch target user's role
+    let target_role: Option<String> = sqlx::query_scalar("SELECT role FROM users WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let target_role = target_role.ok_or((StatusCode::NOT_FOUND, "User not found".to_string()))?;
+
+    // Guard: prevent deleting the last admin
+    if target_role == "Admin" {
+        let remaining_admins: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'Admin' AND id != ?")
+                .bind(&id)
+                .fetch_one(&state.pool)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        if remaining_admins == 0 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Cannot delete the only administrator account".to_string(),
+            ));
+        }
     }
 
     let rows_affected = sqlx::query("DELETE FROM users WHERE id = ?")
@@ -279,6 +307,20 @@ pub async fn delete_user(
     if rows_affected == 0 {
         return Err((StatusCode::NOT_FOUND, "User not found".to_string()));
     }
+
+    // Remove user pool from state
+    {
+        let mut pools = state.user_pools.write().await;
+        pools.remove(&id);
+    }
+
+    // Delete user DB file (ignore error — may not exist yet)
+    let _ = tokio::fs::remove_file(state.config.user_db_path(&id)).await;
+
+    // Delete user data dir (ignore error — may not exist yet)
+    let _ = tokio::fs::remove_dir_all(state.config.user_dir(&id)).await;
+
+    // ponytail: S3 user data not purged on delete; implement list_objects_v2 + batch delete when needed
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -296,7 +338,7 @@ pub async fn admin_stats(
     claims: Claims,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AdminUserStats>>, (StatusCode, String)> {
-    require_admin(&claims).map_err(|(s, m)| (s, m.to_string()))?;
+    claims.require_admin().map_err(|(s, m)| (s, m.to_string()))?;
 
     // Fetch all users from the system pool
     let users = sqlx::query("SELECT id, username, role FROM users ORDER BY username ASC")
@@ -307,6 +349,7 @@ pub async fn admin_stats(
     let mut stats = Vec::new();
     use sqlx::Row;
 
+    // ponytail: N+1 pool opens — one SQLite connection per user; acceptable at small scale, refactor to parallel join or per-user DB size stored in system DB when user count grows
     for row in users {
         let user_id: String = row.try_get("id").unwrap_or_default();
         let username: String = row.try_get("username").unwrap_or_default();

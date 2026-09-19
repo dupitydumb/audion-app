@@ -32,7 +32,6 @@ struct StatsResponse {
     total_albums: i32,
     total_artists: i32,
     total_size_bytes: i64,
-    data_dir: String,
 }
 
 #[derive(Serialize)]
@@ -162,14 +161,11 @@ async fn stats(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .unwrap_or(0);
 
-    let data_dir = state.config.data_dir.to_string_lossy().to_string();
-
     Ok(Json(StatsResponse {
         total_tracks,
         total_albums,
         total_artists,
         total_size_bytes,
-        data_dir,
     }))
 }
 
