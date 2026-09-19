@@ -22,6 +22,15 @@
     onCancel: () => void;
   }>();
 
+  let modalRef = $state<HTMLDivElement | null>(null);
+
+  $effect(() => {
+    if (show && modalRef) {
+      const focusable = modalRef.querySelector<HTMLElement>('button, [href], input, [tabindex]:not([tabindex="-1"])');
+      focusable?.focus();
+    }
+  });
+
   // Handle Escape key to close modal
   function handleKeyDown(event: KeyboardEvent) {
     if (show && event.key === 'Escape') {
@@ -43,7 +52,7 @@
   <div class="modal-backdrop" onclick={onCancel}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal-content glass-card" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-content glass-card" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title" bind:this={modalRef}>
       <button class="close-btn" onclick={onCancel} aria-label="Close modal">
         <X size={18} />
       </button>
@@ -56,7 +65,7 @@
             <AlertTriangle size={24} />
           {/if}
         </div>
-        <h2 class="modal-title">{title}</h2>
+        <h2 class="modal-title" id="confirm-modal-title">{title}</h2>
       </div>
 
       <div class="modal-body">

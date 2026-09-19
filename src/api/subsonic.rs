@@ -23,6 +23,7 @@ struct DbUser {
 
 #[derive(Deserialize, Debug, Default)]
 #[serde(default)]
+#[allow(non_snake_case)]
 pub struct SubsonicParams {
     pub u: Option<String>, // username
     pub p: Option<String>, // password (plain text or enc:hex)
@@ -63,6 +64,7 @@ pub struct SubsonicParams {
     pub trackNumber: Option<i32>,
     pub discNumber: Option<i32>,
     pub year: Option<String>,
+    pub list_type: Option<String>,
 }
 
 // Subsonic Error Codes
@@ -2014,7 +2016,7 @@ pub async fn stream(
         Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
     };
 
-    let song_id_str = match &params.id {
+    let song_id_str = match params.id.as_deref().or(params.songId.as_deref()) {
         Some(id) => id,
         None => return subsonic_error(f, ERROR_MISSING_PARAM, "Missing track parameter 'id'"),
     };
@@ -2304,9 +2306,9 @@ pub async fn scrobble_to_listenbrainz(
     .await?
     .ok_or("Track not found")?;
 
-    let title: String = track.get("title");
-    let artist: String = track.get("artist");
-    let album: String = track.get("album");
+    let title: String = track.try_get("title").unwrap_or_default();
+    let artist: String = track.try_get("artist").unwrap_or_default();
+    let album: String = track.try_get("album").unwrap_or_default();
 
     let client = reqwest::Client::new();
     let body = serde_json::json!({

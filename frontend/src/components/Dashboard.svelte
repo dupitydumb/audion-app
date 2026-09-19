@@ -13,7 +13,6 @@
     total_albums: number;
     total_artists: number;
     total_size_bytes: number;
-    data_dir: string;
   } | null>(null);
 
   let isLoading = $state(true);
@@ -45,23 +44,19 @@
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
-  async function copyDataDir(path: string) {
-    try {
-      await navigator.clipboard.writeText(path);
-      addToast('Data directory copied', 'success');
-    } catch (err: any) {
-      addToast('Copy failed. Please copy manually.', 'error');
-    }
-  }
-
   onMount(() => {
     fetchStats();
   });
 </script>
 
-<div class="page-header">
-  <h1 class="page-title">Dashboard</h1>
-  <p class="page-subtitle">Welcome to your Audion Server administration center.</p>
+<div class="page-header" style="display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+  <div>
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">Welcome to your Audion Server administration center.</p>
+  </div>
+  <button onclick={fetchStats} class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" disabled={isLoading}>
+    <RefreshCw size={12} style="margin-right: 0.25rem;" /> Refresh Stats
+  </button>
 </div>
 
 {#if isLoading}
@@ -89,6 +84,16 @@
     </div>
   </div>
 {:else if stats}
+  {#if stats.total_tracks === 0}
+    <div class="glass-card" style="margin-bottom: 1.5rem; padding: 2rem; text-align: center; border: 1px dashed var(--border-color);">
+      <div style="font-size: 2.5rem; margin-bottom: 0.75rem;">🎵</div>
+      <h2 style="font-family: var(--font-heading); font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Your library is empty</h2>
+      <p style="color: var(--text-secondary); margin-bottom: 1.25rem;">Upload your first tracks to get started with Audion Server.</p>
+      <button onclick={() => setActiveTab('upload')} class="btn btn-primary">
+        Upload Music →
+      </button>
+    </div>
+  {/if}
   <div class="dashboard-grid">
     <div class="glass-card stat-card">
       <div class="stat-header">
@@ -169,25 +174,6 @@
     </div>
   </div>
 
-  <div class="glass-card" style="margin-top: 1.5rem; font-size: 0.85rem; color: var(--text-secondary);">
-    <div class="data-dir-row">
-      <div class="data-dir-group">
-        <span style="font-weight: 600;">Data Directory:</span>
-        <code class="data-dir-code" title={stats.data_dir}>{stats.data_dir}</code>
-        <button
-          onclick={() => stats && copyDataDir(stats.data_dir)}
-          class="btn btn-secondary"
-          style="padding: 0.35rem 0.6rem; font-size: 0.75rem;"
-          aria-label="Copy data directory"
-        >
-          Copy
-        </button>
-      </div>
-      <button onclick={fetchStats} class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">
-        <RefreshCw size={12} style="margin-right: 0.25rem;" /> Refresh Stats
-      </button>
-    </div>
-  </div>
 {:else}
   <div class="glass-card" style="text-align: center; padding: 3rem; color: var(--text-secondary);">
     <p>Failed to load server statistics. Please try refreshing.</p>

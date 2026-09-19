@@ -200,8 +200,11 @@
     }
   }
 
+  let isLikingTrack = $state(false);
+
   async function toggleLike(trackId: number) {
-    if (!token) return;
+    if (!token || isLikingTrack) return;
+    isLikingTrack = true;
     const isCurrentlyLiked = likedTrackIds.includes(trackId);
     try {
       const method = isCurrentlyLiked ? 'DELETE' : 'POST';
@@ -222,6 +225,8 @@
       }
     } catch (err) {
       addToast('Failed to update liked status', 'error');
+    } finally {
+      isLikingTrack = false;
     }
   }
 
@@ -387,9 +392,9 @@
     });
 
     es.addEventListener('library.reset', () => {
-      addToast('Library has been reset.', 'info');
-      if (['dashboard', 'library', 'albums', 'artists', 'playlists', 'liked'].includes(activeTab)) {
-        window.location.reload();
+      addToast('Library was reset. Refreshing data…', 'info');
+      if (['library', 'albums', 'artists', 'playlists', 'liked'].includes(activeTab)) {
+        activeTab = 'dashboard';
       }
     });
 
@@ -540,7 +545,12 @@
     localStorage.setItem('audion_admin_username', newUsername);
     localStorage.setItem('audion_admin_role', newRole);
     localStorage.setItem('audion_admin_lb_token', newLbToken);
-    activeTab = 'dashboard';
+    if (!localStorage.getItem('audion_has_visited')) {
+      activeTab = 'started';
+      localStorage.setItem('audion_has_visited', '1');
+    } else {
+      activeTab = 'dashboard';
+    }
   }
 
   function handleProfileUpdate(newToken: string, newUsername: string, newRole: string, newLbToken: string) {
@@ -815,44 +825,57 @@
 {#if !isLoggedIn}
   <Login onLoginSuccess={handleLoginSuccess} {addToast} />
 {:else}
+  <a href="#main-content" class="skip-link">Skip to main content</a>
   <div class="app-container" class:layout-with-lyrics={showLyricsPanel}>
     <!-- Sidebar Navigation -->
-    <aside class="sidebar {sidebarOpen ? 'is-open' : ''}">
+    <aside class="sidebar {sidebarOpen ? 'is-open' : ''}" aria-label="Main navigation">
       <div class="brand-section">
         <div class="brand-logo">
-          <Music size={16} />
+          <Music size={16} aria-hidden="true" />
         </div>
-        <div class="brand-info" style="display: flex; flex-direction: column;">
+        <div style="display: flex; flex-direction: column;">
           <span class="brand-name">Audion</span>
-          <span class="brand-version" style="font-size: 0.7rem; color: var(--text-muted); font-weight: 500; margin-top: -2px;">v{version}</span>
+          <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: 500; margin-top: -2px;">v{__APP_VERSION__}</span>
         </div>
       </div>
 
       <nav class="nav-links">
-        <button 
-          onclick={() => { activeTab = 'dashboard'; sidebarOpen = false; }} 
+        <button
+          onclick={() => { activeTab = 'dashboard'; sidebarOpen = false; }}
           class="nav-item {activeTab === 'dashboard' ? 'active' : ''}"
+          aria-current={activeTab === 'dashboard' ? 'page' : undefined}
         >
-          <LayoutDashboard size={18} />
+          <LayoutDashboard size={18} aria-hidden="true" />
           <span class="nav-text">Dashboard</span>
         </button>
 
-        {#if role !== 'StreamOnly'}
-        <button 
-          onclick={() => { activeTab = 'upload'; sidebarOpen = false; }} 
-          class="nav-item {activeTab === 'upload' ? 'active' : ''}"
+        <button
+          onclick={() => { activeTab = 'started'; sidebarOpen = false; }}
+          class="nav-item {activeTab === 'started' ? 'active' : ''}"
+          aria-current={activeTab === 'started' ? 'page' : undefined}
         >
-          <UploadCloud size={18} />
+          <BookOpen size={18} aria-hidden="true" />
+          <span class="nav-text">Getting Started</span>
+        </button>
+
+        {#if role !== 'StreamOnly'}
+        <button
+          onclick={() => { activeTab = 'upload'; sidebarOpen = false; }}
+          class="nav-item {activeTab === 'upload' ? 'active' : ''}"
+          aria-current={activeTab === 'upload' ? 'page' : undefined}
+        >
+          <UploadCloud size={18} aria-hidden="true" />
           <span class="nav-text">Upload Music</span>
         </button>
 
-        <button 
-          onclick={() => { activeTab = 'library'; sidebarOpen = false; }} 
+        <button
+          onclick={() => { activeTab = 'library'; sidebarOpen = false; }}
           class="nav-item {activeTab === 'library' ? 'active' : ''}"
+          aria-current={activeTab === 'library' ? 'page' : undefined}
         >
-          <LibraryIcon size={18} />
+          <LibraryIcon size={18} aria-hidden="true" />
           <span class="nav-text" style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-            Library Manager
+            Library
             {#if scanStatus.isScanning || fetcherStatus.isRunning}
               <RefreshCw size={12} class="animate-spin" style="animation: spin 1s linear infinite; color: var(--accent); margin-left: 0.5rem;" />
             {/if}
@@ -860,61 +883,59 @@
         </button>
         {/if}
 
-        <button 
-          onclick={() => { activeTab = 'albums'; sidebarOpen = false; }} 
+        <button
+          onclick={() => { activeTab = 'albums'; sidebarOpen = false; }}
           class="nav-item {activeTab === 'albums' ? 'active' : ''}"
+          aria-current={activeTab === 'albums' ? 'page' : undefined}
         >
-          <Disc size={18} />
+          <Disc size={18} aria-hidden="true" />
           <span class="nav-text">Albums</span>
         </button>
 
-        <button 
-          onclick={() => { activeTab = 'artists'; sidebarOpen = false; }} 
+        <button
+          onclick={() => { activeTab = 'artists'; sidebarOpen = false; }}
           class="nav-item {activeTab === 'artists' ? 'active' : ''}"
+          aria-current={activeTab === 'artists' ? 'page' : undefined}
         >
-          <Users size={18} />
+          <Users size={18} aria-hidden="true" />
           <span class="nav-text">Artists</span>
         </button>
 
-        <button 
-          onclick={() => { activeTab = 'playlists'; sidebarOpen = false; }} 
+        <button
+          onclick={() => { activeTab = 'playlists'; sidebarOpen = false; }}
           class="nav-item {activeTab === 'playlists' ? 'active' : ''}"
+          aria-current={activeTab === 'playlists' ? 'page' : undefined}
         >
-          <ListMusic size={18} />
+          <ListMusic size={18} aria-hidden="true" />
           <span class="nav-text">Playlists</span>
         </button>
 
-        <button 
-          onclick={() => { activeTab = 'liked'; sidebarOpen = false; }} 
+        <button
+          onclick={() => { activeTab = 'liked'; sidebarOpen = false; }}
           class="nav-item {activeTab === 'liked' ? 'active' : ''}"
+          aria-current={activeTab === 'liked' ? 'page' : undefined}
         >
-          <Heart size={18} />
+          <Heart size={18} aria-hidden="true" />
           <span class="nav-text">Liked Tracks</span>
         </button>
 
         <div style="height: 1px; background: var(--border-color); margin: 0.5rem 0;"></div>
 
-        <button 
-          onclick={() => { activeTab = 'connection'; sidebarOpen = false; }} 
+        <button
+          onclick={() => { activeTab = 'connection'; sidebarOpen = false; }}
           class="nav-item {activeTab === 'connection' ? 'active' : ''}"
+          aria-current={activeTab === 'connection' ? 'page' : undefined}
         >
-          <KeyRound size={18} />
+          <KeyRound size={18} aria-hidden="true" />
           <span class="nav-text">API & Credentials</span>
         </button>
 
-        <button 
-          onclick={() => { activeTab = 'started'; sidebarOpen = false; }} 
-          class="nav-item {activeTab === 'started' ? 'active' : ''}"
-        >
-          <BookOpen size={18} />
-          <span class="nav-text">Getting Started</span>
-        </button>
-
-        <button 
-          onclick={() => { activeTab = 'settings'; sidebarOpen = false; }} 
+        <button
+          onclick={() => { activeTab = 'settings'; sidebarOpen = false; }}
           class="nav-item {activeTab === 'settings' ? 'active' : ''}"
+          aria-current={activeTab === 'settings' ? 'page' : undefined}
         >
-          <SettingsIcon size={18} />
+          <SettingsIcon size={18} aria-hidden="true" />
           <span class="nav-text">Settings</span>
         </button>
       </nav>
@@ -948,15 +969,15 @@
           <span style="font-weight: 500;">{username}</span>
         </div>
         <button onclick={handleLogout} class="btn btn-secondary" style="font-size: 0.8rem; padding: 0.45rem; width: 100%; display: flex; gap: 0.5rem; justify-content: center; align-items: center;">
-          <LogOut size={14} /> Log Out
+          <LogOut size={14} aria-hidden="true" /> Log Out
         </button>
       </div>
     </aside>
 
-    <div class="sidebar-overlay {sidebarOpen ? 'show' : ''}" onclick={() => sidebarOpen = false}></div>
+    <div class="sidebar-overlay {sidebarOpen ? 'show' : ''}" onclick={() => sidebarOpen = false} aria-hidden={!sidebarOpen}></div>
 
     <!-- Main Content Area -->
-    <main class="main-content" style="margin-bottom: var(--player-height);">
+    <main class="main-content" id="main-content" style="margin-bottom: var(--player-height);">
       <div class="mobile-topbar">
         <button class="icon-button" onclick={() => sidebarOpen = !sidebarOpen} aria-label="Toggle navigation">
           <Menu size={18} />
@@ -967,7 +988,7 @@
       {#if activeTab === 'dashboard'}
         <Dashboard {token} setActiveTab={(tab) => activeTab = tab} {addToast} />
       {:else if activeTab === 'upload' && role !== 'StreamOnly'}
-        <Upload />
+        <Upload setActiveTab={(tab) => activeTab = tab} />
       {:else if activeTab === 'library' && role !== 'StreamOnly'}
         <Library 
           {token} 
@@ -1052,7 +1073,7 @@
 
     <!-- Transcoding Status Bar -->
     {#if isTranscoding && playingTrack}
-      <div class="transcoding-bar" in:slide={{ duration: 300 }}>
+      <div class="transcoding-bar" aria-live="polite" in:slide={{ duration: 300 }}>
         <RefreshCw size={14} class="animate-spin" style="animation: spin 1s linear infinite;" />
         <span>Converting FLAC to MP3 for streaming...</span>
         <span class="transcoding-track">{playingTrack.title}</span>
@@ -1144,18 +1165,20 @@
                   <span class="genre-tag" style="margin-left: 0.25rem;">{playingTrack.genre}</span>
                 {/if}
                 {#if isTranscoding}
-                  <span class="converting-badge" style="font-size: 0.65rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 0.1rem 0.35rem; border-radius: 4px; color: rgb(216, 180, 254); font-weight: 600; display: inline-flex; align-items: center; gap: 0.25rem;">
+                  <span class="converting-badge" style="font-size: 0.65rem; text-transform: uppercase; background: var(--accent-purple-bg); border: 1px solid var(--accent-purple-border); padding: 0.1rem 0.35rem; border-radius: 4px; color: rgb(216, 180, 254); font-weight: 600; display: inline-flex; align-items: center; gap: 0.25rem;">
                     <RefreshCw size={8} class="animate-spin" style="animation: spin 1s linear infinite;" /> Converting (FFmpeg)
                   </span>
                 {/if}
               </div>
             </div>
             {#if role !== 'StreamOnly'}
-            <button 
-              onclick={() => playingTrack && toggleLike(playingTrack.id)} 
-              class="btn" 
+            <button
+              onclick={() => playingTrack && toggleLike(playingTrack.id)}
+              class="btn"
               style="background: transparent; border: none; padding: 0.25rem; color: {likedTrackIds.includes(playingTrack.id) ? 'var(--danger)' : 'var(--text-muted)'}; margin-left: 0.5rem;"
               title={likedTrackIds.includes(playingTrack.id) ? 'Unlike track' : 'Like track'}
+              aria-label={likedTrackIds.includes(playingTrack.id) ? 'Unlike' : 'Like'}
+              disabled={isLikingTrack}
             >
               <Heart size={16} fill={likedTrackIds.includes(playingTrack.id) ? 'currentColor' : 'none'} />
             </button>
@@ -1164,28 +1187,31 @@
 
           <div class="mini-player-controls">
             <div class="controls-row" style="display: flex; align-items: center; gap: 0.75rem; justify-content: center;">
-              <button 
-                onclick={() => isShuffle = !isShuffle} 
-                class="btn" 
+              <button
+                onclick={() => isShuffle = !isShuffle}
+                class="btn"
                 style="background: transparent; border: none; color: {isShuffle ? 'var(--accent)' : 'var(--text-secondary)'}; padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
                 title="Shuffle: {isShuffle ? 'On' : 'Off'}"
+                aria-label={isShuffle ? 'Shuffle on' : 'Shuffle off'}
               >
                 <Shuffle size={14} />
               </button>
 
-              <button 
-                onclick={skipBackward} 
-                class="btn" 
+              <button
+                onclick={skipBackward}
+                class="btn"
                 style="background: transparent; border: none; color: var(--text-primary); padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
                 title="Previous"
+                aria-label="Previous"
               >
                 <SkipBack size={14} fill="currentColor" />
               </button>
 
-              <button 
-                onclick={togglePlay} 
+              <button
+                onclick={togglePlay}
                 class="btn-play-pause"
                 title={isPlaying ? "Pause" : "Play"}
+                aria-label={isPlaying ? "Pause" : "Play"}
               >
                 {#if isBuffering}
                   <RefreshCw size={18} class="animate-spin" style="animation: spin 1s linear infinite;" />
@@ -1196,24 +1222,26 @@
                 {/if}
               </button>
 
-              <button 
-                onclick={skipForward} 
-                class="btn" 
+              <button
+                onclick={skipForward}
+                class="btn"
                 style="background: transparent; border: none; color: var(--text-primary); padding: 0.25rem; display: flex; align-items: center; cursor: pointer;"
                 title="Next"
+                aria-label="Next"
               >
                 <SkipForward size={14} fill="currentColor" />
               </button>
 
-              <button 
+              <button
                 onclick={() => {
                   if (repeatMode === 'off') repeatMode = 'all';
                   else if (repeatMode === 'all') repeatMode = 'one';
                   else repeatMode = 'off';
-                }} 
-                class="btn" 
+                }}
+                class="btn"
                 style="background: transparent; border: none; color: {repeatMode !== 'off' ? 'var(--accent)' : 'var(--text-secondary)'}; padding: 0.25rem; display: flex; align-items: center; position: relative; cursor: pointer;"
                 title="Repeat: {repeatMode}"
+                aria-label={repeatMode !== 'off' ? 'Repeat on' : 'Repeat off'}
               >
                 <Repeat size={14} />
                 {#if repeatMode === 'one'}
@@ -1224,52 +1252,62 @@
 
             <div class="player-progress-container">
               <span class="player-progress-time">{formatTime(currentTime)}</span>
-              <!-- svelte-ignore a11y_click_events_have_key_events -->
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div class="player-progress-bar" onclick={handleProgressClick}>
-                <div 
-                  class="player-progress-fill" 
-                  style="width: {duration > 0 ? (currentTime / duration) * 100 : 0}%"
-                ></div>
-              </div>
+              <input
+                type="range"
+                class="player-progress-bar"
+                min="0"
+                max={duration || 100}
+                step="1"
+                value={currentTime}
+                aria-label="Seek"
+                oninput={(e) => {
+                  const audio = document.querySelector('audio');
+                  if (audio) audio.currentTime = Number((e.target as HTMLInputElement).value);
+                  currentTime = Number((e.target as HTMLInputElement).value);
+                }}
+                style="--progress: {duration ? (currentTime / duration) * 100 : 0}%"
+              />
               <span class="player-progress-time">{formatTime(duration)}</span>
             </div>
           </div>
 
           <div class="mini-player-volume">
-            <button 
-              onclick={() => showLyricsPanel = !showLyricsPanel} 
-              class="btn" 
+            <button
+              onclick={() => showLyricsPanel = !showLyricsPanel}
+              class="btn"
               style="background: transparent; border: none; color: {showLyricsPanel ? '#ffffff' : 'var(--text-secondary)'}; padding: 0.25rem; margin-right: 0.5rem; display: flex; align-items: center;"
               title="Toggle lyrics panel"
+              aria-label={showLyricsPanel ? 'Hide lyrics' : 'Show lyrics'}
             >
               <AlignLeft size={16} />
             </button>
 
-            <button 
-              onclick={() => isFullScreen = true} 
-              class="btn" 
+            <button
+              onclick={() => isFullScreen = true}
+              class="btn"
               style="background: transparent; border: none; color: var(--text-secondary); padding: 0.25rem; margin-right: 0.75rem; display: flex; align-items: center;"
               title="Enter fullscreen"
+              aria-label="Fullscreen"
             >
               <Maximize2 size={16} />
             </button>
 
-            <button onclick={toggleMute} class="btn" style="background: transparent; border: none; color: var(--text-secondary); padding: 0.25rem;">
+            <button onclick={toggleMute} class="btn" style="background: transparent; border: none; color: var(--text-secondary); padding: 0.25rem;" aria-label={isMuted ? 'Unmute' : 'Mute'} title={isMuted ? 'Unmute' : 'Mute'}>
               {#if isMuted}
                 <VolumeX size={16} />
               {:else}
                 <Volume2 size={16} />
               {/if}
             </button>
-            <input 
-              type="range" 
-              min="0" 
-              max="1" 
-              step="0.01" 
-              value={volume} 
-              oninput={handleVolumeChange} 
-              class="volume-slider" 
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume}
+              oninput={handleVolumeChange}
+              class="volume-slider"
+              aria-label="Volume"
             />
           </div>
         {/if}
@@ -1293,7 +1331,7 @@
 
     <!-- Lyrics Sidebar -->
     {#if showLyricsPanel && playingTrack}
-      <aside class="lyrics-sidebar">
+      <aside class="lyrics-sidebar" aria-label="Lyrics">
         <div class="lyrics-header">
           <span class="lyrics-title">Lyrics</span>
           <button 
@@ -1391,10 +1429,11 @@
     </div>
     <div class="backdrop-layer"></div>
 
-    <button 
+    <button
       class="fullscreen-close-btn"
       onclick={() => isFullScreen = false}
       title="Exit fullscreen"
+      aria-label="Close fullscreen"
     >
       <Minimize2 size={20} />
     </button>
@@ -1453,37 +1492,49 @@
             <span class="fullscreen-time">{formatTime(currentTime)}</span>
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="fullscreen-progress-bar" onclick={handleProgressClick}>
-              <div 
-                class="fullscreen-progress-fill" 
-                style="width: {duration > 0 ? (currentTime / duration) * 100 : 0}%"
-              ></div>
-            </div>
+            <input
+              type="range"
+              class="fullscreen-progress-bar"
+              min="0"
+              max={duration || 100}
+              step="1"
+              value={currentTime}
+              aria-label="Seek"
+              oninput={(e) => {
+                const audio = document.querySelector('audio');
+                if (audio) audio.currentTime = Number((e.target as HTMLInputElement).value);
+                currentTime = Number((e.target as HTMLInputElement).value);
+              }}
+              style="--progress: {duration ? (currentTime / duration) * 100 : 0}%"
+            />
             <span class="fullscreen-time">{formatTime(duration)}</span>
           </div>
 
           <div class="fullscreen-buttons-row" style="display: flex; align-items: center; gap: 1.5rem; justify-content: center;">
-            <button 
-              onclick={() => isShuffle = !isShuffle} 
-              class="fullscreen-btn" 
+            <button
+              onclick={() => isShuffle = !isShuffle}
+              class="fullscreen-btn"
               style="color: {isShuffle ? 'var(--accent)' : 'rgba(255,255,255,0.6)'};"
               title="Shuffle: {isShuffle ? 'On' : 'Off'}"
+              aria-label={isShuffle ? 'Shuffle on' : 'Shuffle off'}
             >
               <Shuffle size={20} />
             </button>
 
-            <button 
-              onclick={skipBackward} 
+            <button
+              onclick={skipBackward}
               class="fullscreen-btn"
               title="Previous"
+              aria-label="Previous"
             >
               <SkipBack size={22} fill="currentColor" />
             </button>
 
-            <button 
+            <button
               onclick={togglePlay}
               class="fullscreen-btn fullscreen-btn-play"
               title={isPlaying ? "Pause" : "Play"}
+              aria-label={isPlaying ? "Pause" : "Play"}
             >
               {#if isBuffering}
                 <RefreshCw size={22} class="animate-spin" style="animation: spin 1s linear infinite;" />
@@ -1494,23 +1545,25 @@
               {/if}
             </button>
 
-            <button 
-              onclick={skipForward} 
+            <button
+              onclick={skipForward}
               class="fullscreen-btn"
               title="Next"
+              aria-label="Next"
             >
               <SkipForward size={22} fill="currentColor" />
             </button>
 
-            <button 
+            <button
               onclick={() => {
                 if (repeatMode === 'off') repeatMode = 'all';
                 else if (repeatMode === 'all') repeatMode = 'one';
                 else repeatMode = 'off';
-              }} 
-              class="fullscreen-btn" 
+              }}
+              class="fullscreen-btn"
               style="color: {repeatMode !== 'off' ? 'var(--accent)' : 'rgba(255,255,255,0.6)'}; position: relative;"
               title="Repeat: {repeatMode}"
+              aria-label={repeatMode !== 'off' ? 'Repeat on' : 'Repeat off'}
             >
               <Repeat size={20} />
               {#if repeatMode === 'one'}
@@ -1519,11 +1572,12 @@
             </button>
 
             {#if role !== 'StreamOnly'}
-            <button 
+            <button
               onclick={() => playingTrack && toggleLike(playingTrack.id)}
               class="fullscreen-btn"
               style="color: {likedTrackIds.includes(playingTrack.id) ? 'var(--danger)' : 'rgba(255,255,255,0.6)'};"
-              title="Like track"
+              title={likedTrackIds.includes(playingTrack.id) ? 'Unlike track' : 'Like track'}
+              aria-label={likedTrackIds.includes(playingTrack.id) ? 'Unlike' : 'Like'}
             >
               <Heart size={20} fill={likedTrackIds.includes(playingTrack.id) ? 'currentColor' : 'none'} />
             </button>
@@ -1531,21 +1585,22 @@
           </div>
 
           <div class="fullscreen-volume-row">
-            <button onclick={toggleMute} class="fullscreen-btn">
+            <button onclick={toggleMute} class="fullscreen-btn" aria-label={isMuted ? 'Unmute' : 'Mute'} title={isMuted ? 'Unmute' : 'Mute'}>
               {#if isMuted}
                 <VolumeX size={18} />
               {:else}
                 <Volume2 size={18} />
               {/if}
             </button>
-            <input 
-              type="range" 
-              min="0" 
-              max="1" 
-              step="0.01" 
-              value={volume} 
-              oninput={handleVolumeChange} 
-              class="fullscreen-volume-slider" 
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume}
+              oninput={handleVolumeChange}
+              class="fullscreen-volume-slider"
+              aria-label="Volume"
             />
           </div>
         </div>

@@ -34,7 +34,6 @@ struct StatsResponse {
     total_albums: i32,
     total_artists: i32,
     total_size_bytes: i64,
-    data_dir: String,
 }
 
 #[derive(Serialize)]
@@ -93,41 +92,86 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/admin/tunnel", get(tunnel::get_tunnel_info).put(tunnel::update_tunnel_config))
         .route("/api/admin/tunnel/toggle", post(tunnel::toggle_tunnel))
         .route("/api/admin/storage", get(storage_settings::get_storage_settings).put(storage_settings::update_storage_settings))
+        // Subsonic API — both .view and bare paths for client compatibility
         .route("/rest/ping.view", get(subsonic::ping).post(subsonic::ping))
+        .route("/rest/ping", get(subsonic::ping).post(subsonic::ping))
         .route("/rest/getLicense.view", get(subsonic::get_license).post(subsonic::get_license))
+        .route("/rest/getLicense", get(subsonic::get_license).post(subsonic::get_license))
         .route("/rest/getOpenSubsonicExtensions.view", get(subsonic::get_open_subsonic_extensions).post(subsonic::get_open_subsonic_extensions))
+        .route("/rest/getOpenSubsonicExtensions", get(subsonic::get_open_subsonic_extensions).post(subsonic::get_open_subsonic_extensions))
         .route("/rest/getMusicFolders.view", get(subsonic::get_music_folders).post(subsonic::get_music_folders))
+        .route("/rest/getMusicFolders", get(subsonic::get_music_folders).post(subsonic::get_music_folders))
         .route("/rest/getIndexes.view", get(subsonic::get_indexes).post(subsonic::get_indexes))
+        .route("/rest/getIndexes", get(subsonic::get_indexes).post(subsonic::get_indexes))
         .route("/rest/getArtists.view", get(subsonic::get_artists).post(subsonic::get_artists))
+        .route("/rest/getArtists", get(subsonic::get_artists).post(subsonic::get_artists))
         .route("/rest/getArtist.view", get(subsonic::get_artist).post(subsonic::get_artist))
+        .route("/rest/getArtist", get(subsonic::get_artist).post(subsonic::get_artist))
         .route("/rest/getAlbum.view", get(subsonic::get_album).post(subsonic::get_album))
+        .route("/rest/getAlbum", get(subsonic::get_album).post(subsonic::get_album))
         .route("/rest/getMusicDirectory.view", get(subsonic::get_music_directory).post(subsonic::get_music_directory))
+        .route("/rest/getMusicDirectory", get(subsonic::get_music_directory).post(subsonic::get_music_directory))
         .route("/rest/getSong.view", get(subsonic::get_song).post(subsonic::get_song))
+        .route("/rest/getSong", get(subsonic::get_song).post(subsonic::get_song))
         .route("/rest/getGenres.view", get(subsonic::get_genres).post(subsonic::get_genres))
+        .route("/rest/getGenres", get(subsonic::get_genres).post(subsonic::get_genres))
         .route("/rest/getAlbumList.view", get(subsonic::get_album_list).post(subsonic::get_album_list))
+        .route("/rest/getAlbumList", get(subsonic::get_album_list).post(subsonic::get_album_list))
         .route("/rest/getAlbumList2.view", get(subsonic::get_album_list).post(subsonic::get_album_list))
+        .route("/rest/getAlbumList2", get(subsonic::get_album_list).post(subsonic::get_album_list))
         .route("/rest/getRandomSongs.view", get(subsonic::get_random_songs).post(subsonic::get_random_songs))
+        .route("/rest/getRandomSongs", get(subsonic::get_random_songs).post(subsonic::get_random_songs))
         .route("/rest/getSongsByGenre.view", get(subsonic::get_songs_by_genre).post(subsonic::get_songs_by_genre))
+        .route("/rest/getSongsByGenre", get(subsonic::get_songs_by_genre).post(subsonic::get_songs_by_genre))
         .route("/rest/getStarred.view", get(subsonic::get_starred).post(subsonic::get_starred))
+        .route("/rest/getStarred", get(subsonic::get_starred).post(subsonic::get_starred))
         .route("/rest/getStarred2.view", get(subsonic::get_starred).post(subsonic::get_starred))
+        .route("/rest/getStarred2", get(subsonic::get_starred).post(subsonic::get_starred))
         .route("/rest/star.view", get(subsonic::star).post(subsonic::star))
+        .route("/rest/star", get(subsonic::star).post(subsonic::star))
         .route("/rest/unstar.view", get(subsonic::unstar).post(subsonic::unstar))
+        .route("/rest/unstar", get(subsonic::unstar).post(subsonic::unstar))
         .route("/rest/search2.view", get(subsonic::search3).post(subsonic::search3))
+        .route("/rest/search2", get(subsonic::search3).post(subsonic::search3))
         .route("/rest/search3.view", get(subsonic::search3).post(subsonic::search3))
+        .route("/rest/search3", get(subsonic::search3).post(subsonic::search3))
         .route("/rest/getPlaylists.view", get(subsonic::get_playlists).post(subsonic::get_playlists))
+        .route("/rest/getPlaylists", get(subsonic::get_playlists).post(subsonic::get_playlists))
         .route("/rest/getPlaylist.view", get(subsonic::get_playlist).post(subsonic::get_playlist))
+        .route("/rest/getPlaylist", get(subsonic::get_playlist).post(subsonic::get_playlist))
         .route("/rest/createPlaylist.view", get(subsonic::create_playlist).post(subsonic::create_playlist))
+        .route("/rest/createPlaylist", get(subsonic::create_playlist).post(subsonic::create_playlist))
         .route("/rest/updatePlaylist.view", get(subsonic::update_playlist).post(subsonic::update_playlist))
+        .route("/rest/updatePlaylist", get(subsonic::update_playlist).post(subsonic::update_playlist))
         .route("/rest/deletePlaylist.view", get(subsonic::delete_playlist).post(subsonic::delete_playlist))
+        .route("/rest/deletePlaylist", get(subsonic::delete_playlist).post(subsonic::delete_playlist))
         .route("/rest/getCoverArt", get(subsonic::get_cover_art).post(subsonic::get_cover_art))
         .route("/rest/getCoverArt.view", get(subsonic::get_cover_art).post(subsonic::get_cover_art))
         .route("/rest/stream", get(subsonic::stream).post(subsonic::stream))
         .route("/rest/stream.view", get(subsonic::stream).post(subsonic::stream))
         .route("/rest/getUser.view", get(subsonic::get_user).post(subsonic::get_user))
+        .route("/rest/getUser", get(subsonic::get_user).post(subsonic::get_user))
         .route("/rest/getUsers.view", get(subsonic::get_users).post(subsonic::get_users))
+        .route("/rest/getUsers", get(subsonic::get_users).post(subsonic::get_users))
         .route("/rest/getScanStatus.view", get(subsonic::get_scan_status).post(subsonic::get_scan_status))
+        .route("/rest/getScanStatus", get(subsonic::get_scan_status).post(subsonic::get_scan_status))
         .route("/rest/scrobble.view", get(subsonic::scrobble).post(subsonic::scrobble))
+        .route("/rest/scrobble", get(subsonic::scrobble).post(subsonic::scrobble))
         .route("/rest/updateTags.view", get(subsonic::update_tags).post(subsonic::update_tags))
+        .route("/rest/updateTags", get(subsonic::update_tags).post(subsonic::update_tags))
+        .route("/rest/getArtists", get(subsonic::get_artists).post(subsonic::get_artists))
+        .route("/rest/getArtist.view", get(subsonic::get_artist).post(subsonic::get_artist))
+        .route("/rest/getArtist", get(subsonic::get_artist).post(subsonic::get_artist))
+        .route("/rest/getAlbum.view", get(subsonic::get_album).post(subsonic::get_album))
+        .route("/rest/getAlbum", get(subsonic::get_album).post(subsonic::get_album))
+        .route("/rest/getStarred.view", get(subsonic::get_starred).post(subsonic::get_starred))
+        .route("/rest/getStarred", get(subsonic::get_starred).post(subsonic::get_starred))
+        .route("/rest/getStarred2.view", get(subsonic::get_starred).post(subsonic::get_starred))
+        .route("/rest/getStarred2", get(subsonic::get_starred).post(subsonic::get_starred))
+        .route("/rest/star.view", get(subsonic::star).post(subsonic::star))
+        .route("/rest/star", get(subsonic::star).post(subsonic::star))
+        .route("/rest/unstar.view", get(subsonic::unstar).post(subsonic::unstar))
+        .route("/rest/unstar", get(subsonic::unstar).post(subsonic::unstar))
         .route("/api/tracks", get(tracks::get_tracks).post(tracks::upload_track))
         .route("/api/tracks/:id", get(tracks::get_track_by_id).delete(tracks::delete_track))
         .route("/api/tracks/:id/metadata", put(tracks::update_track_metadata))
@@ -241,14 +285,11 @@ async fn stats(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .unwrap_or(0);
 
-    let data_dir = state.config.data_dir.to_string_lossy().to_string();
-
     Ok(Json(StatsResponse {
         total_tracks,
         total_albums,
         total_artists,
         total_size_bytes,
-        data_dir,
     }))
 }
 

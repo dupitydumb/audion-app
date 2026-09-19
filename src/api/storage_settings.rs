@@ -128,6 +128,12 @@ pub async fn update_storage_settings(
             }
         };
 
+        if access_key.trim().is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "S3 access key is required".to_string()));
+        }
+        if secret_key.trim().is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "S3 secret key is required".to_string()));
+        }
         if bucket.trim().is_empty() {
             return Err((StatusCode::BAD_REQUEST, "Bucket name cannot be empty".to_string()));
         }
@@ -236,7 +242,6 @@ pub async fn update_storage_settings(
         });
 
         head_bucket_result?;
-
         info!("S3 storage connection test succeeded.");
     } else if payload.storage_type == "azure" {
         let container = payload.azure_container.clone().unwrap_or_default();

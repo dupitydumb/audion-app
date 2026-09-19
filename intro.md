@@ -1,66 +1,120 @@
 Hey Audion Community! 👋
 
-We have some incredibly exciting news for the self-hosters, homelab enthusiasts, and privacy advocates out there! We are officially introducing Audion Self-Hosting using audion-app! 🐳✨
+If you've been running a homelab, self-hosting your services, or just tired of your music being held hostage by a subscription — this one's for you. We are officially introducing Audion Self-Hosting using `audion-server-docker`! 🐳✨
 
-If you’ve ever wanted to access your personal music library across all your devices, keep your data strictly private, and experience real-time library synchronization, this is the ultimate upgrade you've been waiting for.
+We're officially launching **Audion Self-Hosting** with `audion-server-docker`. Your music. Your server. Your rules. 🐳
 
-Here is everything you need to know about the self-hosted Audion Server, its benefits, and how you can get started today!
+---
 
-🎵 Welcome to Audion Self-Hosting: Complete Control of Your Music
-🏠 What is Self-Hosting?
-By default, Audion operates as a fully local, privacy-focused offline player on your device. With our new Self-Hosted / Custom Server support, you can now run your own private Audion Server.
+## 🏠 Why Self-Host Your Music?
 
-The Audion Server is a lightweight audio streaming backend written in Rust, paired with a modern, responsive web frontend built with Svelte 5. By running the server on your home computer, a Raspberry Pi, or a VPS, you create your own private cloud. Your Audion app then connects directly to your own server, keeping you in charge of your data and media!
+Most of us in the homelab world already know the answer. But here's the pitch for everyone else:
 
-✨ What Can You Do With It?
-Once you pair your Audion app with your Audion Server, you unlock a suite of powerful features:
+Streaming services come and go. Catalogs shrink. Prices go up. And somewhere between the algorithm and the licensing deals, *your* taste gets lost in a sea of recommendations you didn't ask for.
 
-⚡ Real-Time Client Sync (SSE): The server uses Server-Sent Events (SSE) to instantly broadcast library updates (such as adding or deleting tracks) directly to your connected Audion client, keeping everything in perfect sync.
-🎵 Direct Audio Streaming: Stream your high-quality audio files (FLAC, ALAC, AAC, MP3, M4A, and more) directly from your server. No need to keep music files duplicated on every device!
-💾 Smart Metadata Scanning & Deduplication: When you upload music, the server automatically scans track tags (album, artist, track number, genre, duration) and performs content-based deduplication using metadata hashes to ensure a clean library.
-🖼️ Auto Artwork Extraction: Embedded cover art is automatically extracted and served as web-friendly URLs.
-✍️ Synced Lyrics on the Fly: Audion Server integrates with LRCLIB to automatically fetch synchronized and plain-text lyrics when they aren't embedded in your files.
-📁 Offline Listening: If you're on the go, you can download/resolve tracks from your server directly into your local Audion app storage to listen offline.
-📻 Subsonic Client Support: Stream your library using standard Subsonic-compliant music players (e.g. Symfonium, DSub, play:Sub, Feishin, etc.) directly on your phone, tablet, or desktop with standard password or token authentication.
-🌟 What are the Benefits?
-🔒 Complete Data Privacy: No third-party servers, no analytics trackers, no account registration on external clouds. Your tracks, playlists, and listening history stay on your hardware.
-⚡ Lightweight & Fast: Built on a Rust web backend (axum) and SQLite (sqlx), the server is highly optimized. It runs smoothly with minimal CPU and memory footprints.
-📱 Cross-Device Synchronized Experience: Connect multiple Audion client apps (Windows, macOS, Linux, Android) to the same server and enjoy a consistent, unified library.
-🌐 Web Access Anywhere: The Docker setup bundles a standalone Svelte web app. Even without the desktop app, you can log in to your server via any web browser on port 80 to manage your library.
-🛠️ Getting Started: How to Set Up & Connect
-Deploying your server and connecting your app is quick and painless. Here is the step-by-step guide:
+Self-hosting is different. You rip your CDs, buy your FLACs, rescue your MP3 collection from that dusty external drive — and you own it. No middleman. No monthly fee. No one deciding what's "available in your region."
 
-Step 1: Deploying the Audion Server with Docker
-The easiest way to run the server is using Docker Compose.
+Audion Server is built for exactly that. It's a lightweight audio streaming backend written in **Rust**, paired with a clean **Svelte 5** web interface. Toss it on a Raspberry Pi, an old PC, a VPS, or your NAS — and it just runs.
 
-Locate the docker-compose.yml file in the audion-app directory. It defines two services:
-audion-server (Rust backend listening on port 8080)
-audion-frontend (Nginx + Svelte 5 frontend listening on port 80)
-Edit the environment variables in your docker-compose.yml file to secure your setup:
-```yaml
-environment:
-  - AUDION_ADMIN_USER=admin
-  - AUDION_ADMIN_PASSWORD=your-secure-password   # Change this!
-  - AUDION_JWT_SECRET=your-custom-secure-secret   # Change this!
-  - AUDION_PORT=8080
-  - AUDION_DATA_DIR=/data
+---
+
+## ✨ What You Get
+
+Once your server is up, here's what's waiting:
+
+**🎵 Direct High-Quality Streaming**
+Stream FLAC, ALAC, AAC, MP3, M4A and more from your own hardware to any device. No transcoding unless you want it.
+
+**⚡ Real-Time Library Sync**
+Uses Server-Sent Events (SSE) to push library updates — new tracks, deletions, changes — instantly to every connected client. No refresh needed.
+
+**💾 Smart Metadata + Deduplication**
+Upload and the server handles the rest. It reads your tags (album, artist, track number, genre, duration), extracts artwork, and deduplicates by content hash so your library stays clean even after messy imports.
+
+**🖼️ Auto Cover Art**
+Embedded artwork is extracted and served as proper web URLs — no extra setup.
+
+**✍️ Synced Lyrics**
+No lyrics in your file tags? The server quietly fetches them from [LRCLIB](https://lrclib.net/) — synchronized, timed lyrics that just appear.
+
+**📻 Subsonic API Support**
+Already using DSub, Symfonium, Feishin, or any other Subsonic-compatible client? Point it at your Audion server. It speaks the same protocol. Works on Android, iOS, and desktop out of the box.
+
+**🔒 It's Just Yours**
+No accounts on external clouds. No analytics. No one watching your listening habits. Your tracks, playlists, and history live on your hardware and nowhere else.
+
+---
+
+## 🛠️ Getting It Running
+
+The whole stack ships as a single Docker image — nginx serving the web frontend, Rust backend running internally. One container, one port, done.
+
+**Prerequisites:** Docker (and optionally Docker Compose)
+
+### Step 1 — Clone and configure
+
+```bash
+git clone https://github.com/dupitydumb/audion-server-docker.git
+cd audion-server-docker
+cp .env.example .env
 ```
-Run the following command in your terminal to build and start the containers in the background:
+
+Open `.env` and set your credentials:
+
+```env
+AUDION_ADMIN_USER=admin
+AUDION_ADMIN_PASSWORD=your-secure-password   # change this
+AUDION_JWT_SECRET=a-long-random-string        # change this
+```
+
+> **Note:** Never commit your `.env` file. It's already in `.gitignore`.
+
+### Step 2 — Start it
+
 ```bash
 docker compose up --build -d
 ```
-Access the web dashboard by opening your browser and navigating to http://localhost (or your machine's IP address) and log in with your configured admin credentials. Here you can upload files and manage playlists.
-Step 2: Connecting the Audion App
-Once your server is running, connecting your desktop app takes seconds:
 
-Open your Audion app.
-Navigate to the Connect / Sync panel.
-Under server settings, select Self-Hosted / Custom Server.
-Enter your credentials:
-Server URL: http://<YOUR_SERVER_IP>:8080 (use the backend port 8080 for API connection)
-Username: (The AUDION_ADMIN_USER you configured)
-Password: (The AUDION_ADMIN_PASSWORD you configured)
-Click Connect Server.
-Your client will switch provider modes to Server Mode, authenticate securely using a signed JWT token, initiate the Server-Sent Events listener for real-time updates, and load your custom library!
+That's it. The image builds the frontend and backend together, starts the container, and serves everything on port **80**.
 
-We are incredibly excited about this next step for Audion. If you run into any setup questions or want to show off your homelab configs, join us on our Discord! 🎧🎉
+> Watch logs: `docker compose logs -f`  
+> Stop: `docker compose down`
+
+### Step 3 — Open the dashboard
+
+Navigate to `http://localhost` (or your server's IP / custom domain) and log in with the credentials you set in `.env`.
+
+From there you can upload music, scan your library, manage playlists, and configure users.
+
+---
+
+## 📱 Connecting the Audion App
+
+Once your server is running, open the Audion app and:
+
+1. Go to **Connect / Sync**
+2. Select **Self-Hosted / Custom Server**
+3. Enter:
+   - **Server URL:** `http://<YOUR_SERVER_IP>` — or your custom domain (e.g. `https://music.yourdomain.com`)
+   - **Username** and **Password** from your `.env`
+4. Hit **Connect**
+
+The app authenticates, opens the SSE stream for live updates, and loads your library. You're in.
+
+---
+
+## 🌐 Deploying with a Custom Domain (Coolify, Nginx Proxy Manager, etc.)
+
+Running behind a reverse proxy? The container listens on port **80** and handles `/api/` and `/rest/` internally. Just point your proxy at the container — SSL termination happens at the proxy layer, nothing changes inside the image.
+
+Subsonic clients connect to `https://music.yourdomain.com` — no port needed, no `/rest/` suffix.
+
+---
+
+## 💬 Show Off Your Setup
+
+Got it running on a Pi? A homelab cluster? A $4/mo VPS? We want to see it. Drop your setup in our Discord — configs, screenshots, rack photos, all of it. 🎧
+
+The homelab community built a lot of what makes self-hosting worth doing. This is our small contribution back.
+
+Welcome to the stack. 🎶

@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Install deps
 COPY package.json package-lock.json ./
-RUN npm install --verbose
+RUN npm install
 
 # Build app
 COPY . .

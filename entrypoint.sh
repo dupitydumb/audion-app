@@ -21,29 +21,32 @@ if [ "$(id -u audion)" -ne "$PUID" ]; then
 fi
 
 # Ensure correct permissions on data and application directories
-echo "Fixing ownership for /data and /app..."
-chown -R audion:audion /data /app
+if [ "$PUID" != "10001" ] || [ "$PGID" != "10001" ]; then
+    echo "Fixing ownership for /data and /app..."
+    chown -R audion:audion /data /app
+fi
 
-# Print getting started info
-AUDION_PORT=${AUDION_PORT:-8080}
-AUDION_ADMIN_USER=${AUDION_ADMIN_USER:-admin}
+# Ensure data subdirectories exist with correct ownership
+mkdir -p /data/db /data/tracks /data/artwork
+chown -R audion:audion /data
 
-echo ""
-echo "========================================================================"
-echo "  Audion Server is ready!"
-echo "========================================================================"
-echo "  🌐 Web UI / API:       http://localhost:${AUDION_PORT}"
-echo "  🔑 Admin Username:     ${AUDION_ADMIN_USER}"
-echo "  📁 Data Directory:     /data (SQLite DB & settings)"
-echo "  🎵 Music Directory:    /data/users/<username>/"
-echo ""
-echo "  To get started:"
-echo "  1. Open http://localhost:${AUDION_PORT} in your web browser."
-echo "  2. Log in using the admin credentials from your .env file."
-echo "  3. Upload/drop your music files under the users' directory."
-echo "========================================================================"
-echo ""
+# Start backend as audion user in background
+echo "Launching audion-server as non-root user (background)..."
+gosu audion /app/audion-server &
 
-# Drop privileges and run the main command
-echo "Launching audion-server as non-root user..."
-exec gosu audion /app/audion-server "$@"
+# Wait for backend to bind before nginx starts proxying (max 30s)
+echo "Waiting for backend to be ready..."
+WAIT=0
+until curl -sf http://127.0.0.1:${AUDION_PORT:-8086}/api/health > /dev/null 2>&1; do
+    if [ "$WAIT" -ge 30 ]; then
+        echo "ERROR: backend did not start within 30s" >&2
+        exit 1
+    fi
+    sleep 1
+    WAIT=$((WAIT + 1))
+done
+echo "Backend ready."
+
+# Start nginx as PID 1 (foreground)
+echo "Starting nginx..."
+exec nginx -g "daemon off;"

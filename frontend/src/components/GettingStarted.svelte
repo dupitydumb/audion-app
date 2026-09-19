@@ -115,7 +115,7 @@
       </div>
       <div style="border-top: 1px solid var(--border-color); padding-top: 1rem;">
         <h4 style="font-weight: 600; margin-bottom: 0.25rem; color: var(--text-primary);">How is data stored?</h4>
-        <p style="color: var(--text-secondary);">All database records and audio files are securely saved inside the persistent Docker volume volume on the server host machine.</p>
+        <p style="color: var(--text-secondary);">All database records and audio files are securely saved inside the persistent Docker volume on the server host machine.</p>
       </div>
     </div>
   </div>

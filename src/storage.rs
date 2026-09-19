@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 use aws_sdk_s3::Client;
+use aws_sdk_s3::config::BehaviorVersion;
 use aws_sdk_s3::config::Credentials;
 use aws_sdk_s3::config::Region;
 use aws_sdk_s3::config::retry::RetryConfig;

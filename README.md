@@ -68,7 +68,6 @@ Audion Server is configured using environment variables. When starting, the back
 | `AUDION_ADMIN_PASSWORD` | Initial password for the bootstrapped administrator | `changeme` |
 | `AUDION_JWT_SECRET` | Secret key used for signing JWT tokens | `your-secret-key-here-super-secure` |
 | `AUDION_DATA_DIR` | Directory where SQLite database, tracks, and artwork are stored | `./data` |
-| `AUDION_PUBLIC_DIR` | Directory containing built frontend static files (for single-binary mode) | `./frontend/dist` |
 | `AUDION_JWT_EXPIRATION_DAYS` | Number of days before a issued JWT token expires | `7` |
 | `AUDION_CORS_ORIGIN` | CORS allowed origins (e.g. `*` or a specific URL) | `*` |
 | `AUDION_MAX_BODY_SIZE` | Maximum allowed request body size in bytes (e.g. for uploads) | `262144000` (250MB) |
@@ -80,39 +79,40 @@ Audion Server is configured using environment variables. When starting, the back
 
 ### Option 1: Running with Docker (Recommended)
 
-Audion Server comes with a preconfigured `docker-compose.yml` for multi-container orchestration.
+Audion Server comes with a preconfigured `docker-compose.yml` for single-container deployment.
+
+**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Docker Compose).
 
 1.  **Configure Environment Variables**
-    Copy the `.env.example` file to `.env` in the root directory:
+
+    Copy `.env.example` to `.env` in the root directory:
     ```bash
     cp .env.example .env
     ```
-    Open the newly created `.env` file in a text editor and configure your secrets:
-    *   Set `AUDION_ADMIN_PASSWORD` to a strong administrator password.
-    *   Generate a secure, unique `AUDION_JWT_SECRET` key using:
-        ```bash
-        openssl rand -hex 32
-        ```
-        And copy the generated hex string into the `AUDION_JWT_SECRET` field in `.env`.
+    Then open `.env` and set:
+    ```env
+    AUDION_ADMIN_USER=admin
+    AUDION_ADMIN_PASSWORD=your-secure-password
+    AUDION_JWT_SECRET=a-long-random-string
+    ```
+    > [!IMPORTANT]
+    > Never commit `.env` to version control. It is already listed in `.gitignore`.
 
-2.  **Start the Containers**
-    Run the following command in the root directory:
+2.  **Start the stack**
     ```bash
     docker compose up --build -d
     ```
-    This compiles the Rust backend inside a slim Debian image, builds the Svelte frontend, and launches the services with Nginx routing requests from `/api/` to the backend.
+    This builds the Rust backend and Svelte frontend into a single image, then starts one container. nginx serves the frontend on port 80 and proxies `/api/` and `/rest/` to the internal backend.
 
-3.  **Access the Application**
-    Open your browser and navigate to `http://localhost`. Log in using your configured administrator credentials.
+3.  **Access the application**
+
+    Open `http://localhost` in your browser and log in with the credentials you set in `.env`.
 
 > [!TIP]
-> **Permission Issues with Database Writes (SQLite Error Code 8)**
-> If you encounter a `500 Internal Server Error` with `attempt to write a readonly database` when performing writes (e.g., toggling liked tracks, creating playlists), it means the SQLite database files or subdirectories under `/data` are owned by `root` instead of the non-root `audion` user (UID 10001) that the server runs as.
->
-> You can fix this by running the following command to correct ownership in the running container:
-> ```bash
-> docker exec -u root audion-app-audion-server-1 chown -R audion:audion /data
-> ```
+> **Logs and Maintenance:**
+> - Watch live logs: `docker compose logs -f`
+> - Stop container: `docker compose down`
+> - Fix database permissions if needed: `docker exec -u root audion-app-audion-server-1 chown -R audion:audion /data`
 
 ---
 
@@ -157,7 +157,7 @@ cargo run
 ```
 
 > [!NOTE]
-> If you built the frontend using `npm run build`, the Rust server will automatically serve the static files from `./frontend/dist` on `http://localhost:8080` (no Nginx or separate node server required).
+> If you built the frontend using `npm run build`, run the Rust server separately on `http://localhost:8080`. In production, nginx (via Docker) serves the built frontend and proxies the API.
 
 ---
 
@@ -180,10 +180,10 @@ audion-app/
 │   │   ├── components/   # UI Modules (Library, Albums, Artists, Playlists, Player...)
 │   │   ├── App.svelte    # Frontend routing & layout wrapper
 │   │   └── app.css       # Custom Glassmorphism Styles & animations
-│   ├── Dockerfile        # Frontend multi-stage build (Node + Nginx)
-│   └── nginx.conf        # Nginx route router and API reverse-proxy
-├── Dockerfile            # Backend multi-stage build (Slim Debian)
-├── docker-compose.yml    # Combined stack setup
+│   └── Dockerfile        # Standalone frontend image (for development/separate deploy)
+├── Dockerfile            # Full-stack multi-stage build (node + rust + nginx runtime)
+├── nginx.conf            # nginx config — serves SPA, proxies /api/ and /rest/
+├── docker-compose.yml    # Single-container stack setup
 └── Cargo.toml            # Rust dependency manifest
 ```
 
@@ -198,7 +198,7 @@ Audion Server includes a built-in Subsonic-compatible API, allowing you to conne
 
 ### Connection Details
 To connect a Subsonic client to your Audion Server, configure the following connection parameters:
-1.  **Server URL**: `http://<your-server-ip>:<port>` (e.g., `http://localhost:8080`). Do not append `/rest/` as clients append this automatically.
+1.  **Server URL**: `http://<your-server-ip>` (port 80 — e.g., `http://localhost` or `https://music.yourdomain.com`). Do not append `/rest/` as clients append this automatically.
 2.  **Username**: Your Audion username.
 3.  **Password**: Your Audion password.
 

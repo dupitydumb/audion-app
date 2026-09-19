@@ -233,10 +233,24 @@ pub async fn update_track_metadata_inner(
                     .unwrap_or(None);
 
                 if let Some(art_path) = art_path_opt {
-                    let full_art_path = state.config.data_dir.join(art_path);
-                    if full_art_path.exists() {
-                        let _ = std::fs::remove_file(full_art_path);
-                    }
+                    let deleted = {
+                        let storage = state.storage_backend.read().await;
+                        match &*storage {
+                            crate::storage::StorageBackend::Local { .. } => {
+                                let full_art_path = state.config.data_dir.join(&art_path);
+                                if full_art_path.exists() {
+                                    let _ = std::fs::remove_file(full_art_path);
+                                }
+                                true
+                            }
+                            crate::storage::StorageBackend::S3 { .. }
+                            | crate::storage::StorageBackend::Azure { .. } => {
+                                let _ = storage.delete_object(&art_path).await;
+                                true
+                            }
+                        }
+                    };
+                    let _ = deleted;
                 }
 
                 sqlx::query("DELETE FROM albums WHERE id = ?")
@@ -456,7 +470,19 @@ pub async fn fetch_track_metadata_inner(
                         };
                         let cover_full = state.config.data_dir.join(&relative_cover);
                         std::fs::create_dir_all(cover_full.parent().unwrap()).ok();
-                        if std::fs::write(&cover_full, &bytes).is_ok() {
+                        let write_success = {
+                            let storage = state.storage_backend.read().await;
+                            match &*storage {
+                                crate::storage::StorageBackend::Local { .. } => {
+                                    std::fs::write(&cover_full, &bytes).is_ok()
+                                }
+                                crate::storage::StorageBackend::S3 { .. }
+                                | crate::storage::StorageBackend::Azure { .. } => {
+                                    storage.put_object(&relative_cover, bytes.to_vec(), "image/jpeg").await.is_ok()
+                                }
+                            }
+                        };
+                        if write_success {
                             sqlx::query("UPDATE tracks SET track_cover_path = ? WHERE id = ?")
                                 .bind(&relative_cover)
                                 .bind(id)
@@ -587,7 +613,19 @@ pub async fn fetch_track_metadata_inner(
                         };
                         let cover_full = state.config.data_dir.join(&relative_cover);
                         std::fs::create_dir_all(cover_full.parent().unwrap()).ok();
-                        if std::fs::write(&cover_full, &bytes).is_ok() {
+                        let write_success = {
+                            let storage = state.storage_backend.read().await;
+                            match &*storage {
+                                crate::storage::StorageBackend::Local { .. } => {
+                                    std::fs::write(&cover_full, &bytes).is_ok()
+                                }
+                                crate::storage::StorageBackend::S3 { .. }
+                                | crate::storage::StorageBackend::Azure { .. } => {
+                                    storage.put_object(&relative_cover, bytes.to_vec(), "image/jpeg").await.is_ok()
+                                }
+                            }
+                        };
+                        if write_success {
                             sqlx::query("UPDATE tracks SET track_cover_path = ? WHERE id = ?")
                                 .bind(&relative_cover)
                                 .bind(id)

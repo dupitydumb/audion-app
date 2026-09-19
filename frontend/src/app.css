@@ -1,5 +1,21 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700;800&display=swap');
 
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 1rem;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  z-index: 9999;
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+.skip-link:focus {
+  top: 1rem;
+}
+
 :root {
   --bg-gradient: radial-gradient(circle at top right, #121214 0%, #09090b 100%);
   --bg-color: #09090b;
@@ -25,9 +41,13 @@
   --font-sans: 'Space Grotesk', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-heading: 'Sora', sans-serif;
   
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.55);
+
+  --accent-purple: #a855f7;
+  --accent-purple-bg: rgba(168, 85, 247, 0.1);
+  --accent-purple-border: rgba(168, 85, 247, 0.3);
   
   --sidebar-width: 260px;
   
@@ -734,6 +754,66 @@ body {
   border-radius: 2px;
   position: relative;
   cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+  border: none;
+  padding: 0;
+}
+
+.player-progress-bar::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(to right, var(--text-primary) var(--progress, 0%), rgba(255,255,255,0.08) var(--progress, 0%));
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.player-progress-bar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 10px;
+  width: 10px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  margin-top: -3px;
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.player-progress-bar:hover::-webkit-slider-thumb {
+  opacity: 1;
+}
+
+.player-progress-bar::-moz-range-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}
+
+.player-progress-bar::-moz-range-progress {
+  height: 4px;
+  background: var(--text-primary);
+  border-radius: 2px;
+}
+
+.player-progress-bar::-moz-range-thumb {
+  height: 10px;
+  width: 10px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.player-progress-bar:hover::-moz-range-thumb {
+  opacity: 1;
 }
 
 .player-progress-fill {
@@ -1012,7 +1092,7 @@ body {
     width: min(80vw, 280px);
     padding: 1.5rem 1rem;
     transform: translateX(-100%);
-    transition: transform 0.2s ease;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
   .sidebar.is-open {
     transform: translateX(0);
@@ -1316,36 +1396,65 @@ body {
   border-radius: 999px;
   position: relative;
   cursor: pointer;
-  transition: height 0.1s ease;
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+  border: none;
+  padding: 0;
 }
 
-.fullscreen-progress-bar:hover {
-  height: 8px;
-}
-
-.fullscreen-progress-fill {
-  background: #ffffff;
-  height: 100%;
+.fullscreen-progress-bar::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 6px;
+  background: linear-gradient(to right, #ffffff var(--progress, 0%), rgba(255,255,255,0.15) var(--progress, 0%));
   border-radius: 999px;
-  position: relative;
+  cursor: pointer;
 }
 
-.fullscreen-progress-fill::after {
-  content: '';
-  position: absolute;
-  right: -5px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 10px;
-  height: 10px;
+.fullscreen-progress-bar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px;
+  width: 12px;
   border-radius: 50%;
   background: #ffffff;
+  cursor: pointer;
+  margin-top: -3px;
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
   opacity: 0;
   transition: opacity 0.1s;
 }
 
-.fullscreen-progress-bar:hover .fullscreen-progress-fill::after {
+.fullscreen-progress-bar:hover::-webkit-slider-thumb {
+  opacity: 1;
+}
+
+.fullscreen-progress-bar::-moz-range-track {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+}
+
+.fullscreen-progress-bar::-moz-range-progress {
+  height: 6px;
+  background: #ffffff;
+  border-radius: 999px;
+}
+
+.fullscreen-progress-bar::-moz-range-thumb {
+  height: 12px;
+  width: 12px;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.fullscreen-progress-bar:hover::-moz-range-thumb {
   opacity: 1;
 }
 
@@ -1587,7 +1696,7 @@ body {
   left: var(--sidebar-width);
   right: 0;
   z-index: 91;
-  background: rgba(168, 85, 247, 0.12);
+  background: var(--accent-purple-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-top: 1px solid rgba(168, 85, 247, 0.25);
@@ -1628,8 +1737,8 @@ body {
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 1rem;
-  background: rgba(168, 85, 247, 0.15);
-  border: 1px solid rgba(168, 85, 247, 0.3);
+  background: var(--accent-purple-bg);
+  border: 1px solid var(--accent-purple-border);
   border-radius: 8px;
   color: rgb(216, 180, 254);
   font-size: 0.85rem;
@@ -1688,7 +1797,7 @@ body {
 /* ─── Mobile Bottom Navigation ────────────────────────────────────── */
 .mobile-bottom-nav {
   position: fixed;
-  bottom: 0;
+  bottom: var(--player-height, 0px);
   left: 0;
   right: 0;
   height: 64px;

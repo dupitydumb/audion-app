@@ -61,6 +61,7 @@ pub async fn login(
         return Err((StatusCode::FORBIDDEN, "Account is disabled. Please contact your administrator."));
     }
 
+    // ponytail: no brute-force protection; add per-username attempt counter + lockout via tower_governor or in-memory HashMap<String, (u32, Instant)> when auth hardening is needed
     if !verify_password(&payload.password, &user.password_hash) {
         return Err((StatusCode::UNAUTHORIZED, "Invalid username or password"));
     }

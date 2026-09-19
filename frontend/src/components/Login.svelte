@@ -68,6 +68,7 @@
           placeholder="Enter username"
           bind:value={username}
           disabled={isLoading}
+          autocomplete="username"
         />
       </div>
 
@@ -80,6 +81,7 @@
           placeholder="Enter password"
           bind:value={password}
           disabled={isLoading}
+          autocomplete="current-password"
         />
       </div>
 

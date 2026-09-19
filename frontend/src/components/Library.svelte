@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Play, Pause, Trash2, Search, Music, Disc, AlertCircle, RefreshCw, Heart, Plus, Pencil, MoreVertical } from '@lucide/svelte';
+  import ConfirmModal from './ConfirmModal.svelte';
 
   let { token, role, currentPlayingId, isPlaying, likedTrackIds, onPlayTrack, onToggleLike, addToast, isMobile, openActionSheet } = $props<{
     token: string;
@@ -147,6 +148,7 @@
   let showBulkPlaylistDropdown = $state(false);
   let eventSource: EventSource | null = null;
   let bulkProgress = $state<{ current: number; total: number; action: string } | null>(null);
+  let confirmModal = $state({ show: false, title: '', message: '', onConfirm: () => {} });
 
   function connectSSE() {
     if (!token) return;
@@ -200,30 +202,35 @@
 
   async function handleBulkDelete() {
     if (selectedTrackIds.length === 0) return;
-    if (!confirm(`Are you sure you want to delete the ${selectedTrackIds.length} selected tracks?`)) {
-      return;
-    }
-    isProcessingBulk = true;
-    try {
-      const res = await fetch('/api/tracks/bulk/delete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ track_ids: selectedTrackIds })
-      });
-      if (!res.ok) {
-        throw new Error('Failed to delete tracks in bulk');
+    confirmModal = {
+      show: true,
+      title: 'Delete Tracks',
+      message: `Delete the ${selectedTrackIds.length} selected tracks? This cannot be undone.`,
+      onConfirm: async () => {
+        confirmModal = { ...confirmModal, show: false };
+        isProcessingBulk = true;
+        try {
+          const res = await fetch('/api/tracks/bulk/delete', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ track_ids: selectedTrackIds })
+          });
+          if (!res.ok) {
+            throw new Error('Failed to delete tracks in bulk');
+          }
+          addToast(`Successfully deleted ${selectedTrackIds.length} tracks`, 'success');
+          clearSelection();
+          fetchTracks();
+        } catch (err: any) {
+          addToast(err.message || 'Bulk delete failed', 'error');
+        } finally {
+          isProcessingBulk = false;
+        }
       }
-      addToast(`Successfully deleted ${selectedTrackIds.length} tracks`, 'success');
-      clearSelection();
-      fetchTracks();
-    } catch (err: any) {
-      addToast(err.message || 'Bulk delete failed', 'error');
-    } finally {
-      isProcessingBulk = false;
-    }
+    };
   }
 
   async function handleBulkFetch(provider: 'musicbrainz' | 'deezer') {
@@ -336,27 +343,31 @@
   }
 
   async function handleDelete(trackId: number, title: string | null) {
-    if (!confirm(`Are you sure you want to delete "${title || 'this track'}"?`)) {
-      return;
-    }
+    confirmModal = {
+      show: true,
+      title: 'Delete Track',
+      message: `Delete "${title || 'this track'}"? This cannot be undone.`,
+      onConfirm: async () => {
+        confirmModal = { ...confirmModal, show: false };
+        try {
+          const res = await fetch(`/api/tracks/${trackId}`, {
+            method: 'DELETE',
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
 
-    try {
-      const res = await fetch(`/api/tracks/${trackId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
+          if (!res.ok) {
+            throw new Error('Failed to delete track');
+          }
+
+          addToast('Track deleted successfully', 'success');
+          fetchTracks();
+        } catch (err: any) {
+          addToast(err.message || 'Delete failed', 'error');
         }
-      });
-
-      if (!res.ok) {
-        throw new Error('Failed to delete track');
       }
-
-      addToast('Track deleted successfully', 'success');
-      fetchTracks();
-    } catch (err: any) {
-      addToast(err.message || 'Delete failed', 'error');
-    }
+    };
   }
 
   function formatDuration(secs: number | null): string {
@@ -433,13 +444,14 @@
   <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; position: relative;">
     <div style="position: relative; flex: 1; display: flex; align-items: center;">
       <Search size={18} style="position: absolute; left: 1rem; color: var(--text-secondary);" />
-      <input 
-        type="text" 
-        class="form-input" 
-        placeholder="Search by title, artist, or album..." 
-        style="width: 100%; padding-left: 2.75rem;" 
+      <input
+        type="text"
+        class="form-input"
+        placeholder="Search by title, artist, or album..."
+        style="width: 100%; padding-left: 2.75rem;"
         bind:value={searchQuery}
         oninput={handleSearchInput}
+        aria-label="Search tracks"
       />
     </div>
     <button onclick={fetchTracks} class="btn btn-secondary" style="display: flex; gap: 0.5rem; align-items: center;">
@@ -533,11 +545,13 @@
               <tr>
                 {#if role !== 'StreamOnly'}
                 <th style="width: 40px; text-align: center; vertical-align: middle;">
-                  <input 
-                    type="checkbox" 
-                    checked={tracks.length > 0 && selectedTrackIds.length === tracks.length}
+                  <input
+                    type="checkbox"
+                    checked={selectedTrackIds.length > 0 && selectedTrackIds.length === tracks.length}
+                    indeterminate={selectedTrackIds.length > 0 && selectedTrackIds.length < tracks.length}
                     onchange={toggleSelectAll}
                     style="cursor: pointer; accent-color: var(--accent); scale: 1.1;"
+                    aria-label="Select all tracks"
                   />
                 </th>
                 {/if}
@@ -555,11 +569,12 @@
                 <tr>
                   {#if role !== 'StreamOnly'}
                   <td style="text-align: center; vertical-align: middle;">
-                    <input 
-                      type="checkbox" 
+                    <input
+                      type="checkbox"
                       checked={selectedTrackIds.includes(track.id)}
                       onchange={() => toggleTrackSelection(track.id)}
                       style="cursor: pointer; accent-color: var(--accent); scale: 1.1;"
+                      aria-label={`Select ${track.title}`}
                     />
                   </td>
                   {/if}
@@ -699,7 +714,7 @@
   <div class="modal-backdrop" onclick={() => showEditModal = false}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal-content glass-card" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-content glass-card" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Edit track metadata">
       <h2 style="font-family: var(--font-heading); font-size: 1.3rem; font-weight: 600; margin-bottom: 1.5rem; color: var(--text-primary);">Edit Metadata</h2>
       
       <form onsubmit={handleSaveMetadata}>
@@ -890,6 +905,15 @@
     </div>
   </div>
 {/if}
+
+<ConfirmModal
+  show={confirmModal.show}
+  title={confirmModal.title}
+  message={confirmModal.message}
+  isDanger={true}
+  onConfirm={confirmModal.onConfirm}
+  onCancel={() => confirmModal = { ...confirmModal, show: false }}
+/>
 
 <style>
   @keyframes spin {
