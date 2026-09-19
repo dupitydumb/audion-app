@@ -26,6 +26,17 @@ if [ "$PUID" != "10001" ] || [ "$PGID" != "10001" ]; then
     chown -R audion:audion /data /app
 fi
 
-# Drop privileges and run the main command
-echo "Launching audion-server as non-root user..."
-exec gosu audion /app/audion-server "$@"
+# Start backend as audion user in background
+echo "Launching audion-server as non-root user (background)..."
+gosu audion /app/audion-server &
+
+# Wait for backend to bind before nginx starts proxying
+echo "Waiting for backend to be ready..."
+until curl -sf http://127.0.0.1:8080/api/health > /dev/null 2>&1; do
+    sleep 1
+done
+echo "Backend ready."
+
+# Start nginx as PID 1 (foreground)
+echo "Starting nginx..."
+exec nginx -g "daemon off;"

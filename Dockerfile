@@ -1,7 +1,18 @@
-# Build stage
-FROM rust:1.92-slim-bookworm AS builder
+# ── Stage 1: Build frontend ────────────────────────────────────────────────
+FROM node:20-alpine AS node-builder
 
-# Install system dependencies (build-essential, pkg-config, etc. if needed)
+WORKDIR /app
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm install
+
+COPY frontend/ ./
+RUN npm run build
+# Output: /app/dist
+
+# ── Stage 2: Build backend ─────────────────────────────────────────────────
+FROM rust:1.92-slim-bookworm AS rust-builder
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -10,32 +21,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy dependency manifests
+# Pre-compile deps (cache layer)
 COPY Cargo.toml Cargo.lock ./
-
-# Create dummy source file to pre-compile dependencies
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release
 RUN rm -rf src
 
-# Copy real source code
+# Build real binary
 COPY src ./src
-
-# Build the release binary
-# Touch main.rs to force cargo to rebuild it instead of using cached dummy binary
 RUN touch src/main.rs
 RUN cargo build --release
+# Output: /app/target/release/audion-server
 
-# Run stage
+# ── Stage 3: Runtime ───────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Install ca-certificates and sqlite3 if needed for runtime
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     sqlite3 \
     ffmpeg \
+    nginx \
     gosu \
     openssh-client \
     curl \
@@ -52,11 +60,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y ngrok \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy compiled binary from builder
-COPY --from=builder /app/target/release/audion-server /app/audion-server
+# Copy backend binary
+COPY --from=rust-builder /app/target/release/audion-server /app/audion-server
 
-# Expose server port
-EXPOSE 8080
+# Copy frontend static files
+COPY --from=node-builder /app/dist /usr/share/nginx/html
+
+# Copy nginx config
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Remove default nginx site
+RUN rm -f /etc/nginx/sites-enabled/default
+
+# Expose only port 80 (nginx); backend runs on 8080 internally
+EXPOSE 80
 
 # Set environment defaults
 ENV AUDION_DATA_DIR=/data
@@ -69,18 +85,15 @@ ENV AUDION_MAX_BODY_SIZE=262144000
 # Define data volume
 VOLUME /data
 
-# Create non-root user and group
+# Create non-root user for backend
 RUN groupadd -g 10001 audion && \
     useradd -u 10001 -g audion -m -s /usr/sbin/nologin audion
 
-# Ensure directories exist and have proper ownership
+# Ensure directories exist with proper ownership
 RUN mkdir -p /data && chown -R audion:audion /app /data
 
-# Copy entrypoint script and make it executable
+# Copy entrypoint script
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# The entrypoint will start as root, fix permissions, and then run as 'audion'
 ENTRYPOINT ["/app/entrypoint.sh"]
-
-
