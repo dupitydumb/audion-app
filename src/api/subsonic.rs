@@ -22,6 +22,7 @@ struct DbUser {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
 pub struct SubsonicParams {
     pub u: Option<String>, // username
     pub p: Option<String>, // password (plain text or enc:hex)
@@ -30,10 +31,17 @@ pub struct SubsonicParams {
     pub f: Option<String>, // format (xml or json)
     pub v: Option<String>, // version
     pub c: Option<String>, // client name
-    pub id: Option<String>, // item ID (for directory / song / stream)
+    pub id: Option<String>, // item ID
     pub maxBitRate: Option<i32>, // max bitrate for streaming
     pub format: Option<String>, // target format for streaming
     pub submission: Option<bool>, // for scrobble
+    pub artistId: Option<String>, // for getArtist / getAlbum
+    pub albumId: Option<String>,  // for getAlbum
+    pub query: Option<String>,    // for search3
+    #[serde(rename = "type")]
+    pub list_type: Option<String>, // for getAlbumList
+    pub offset: Option<i64>,
+    pub size: Option<i64>,
 }
 
 // Subsonic Error Codes
@@ -799,4 +807,515 @@ fn escape_xml(s: &str) -> String {
         .replace(">", "&gt;")
         .replace("\"", "&quot;")
         .replace("'", "&apos;")
+}
+
+// GET/POST /rest/getCoverArt[.view]
+pub async fn get_cover_art(
+    State(state): State<AppState>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    let f = params.f.as_deref().unwrap_or("xml");
+    if let Err(e) = authenticate(&state, &params).await {
+        return subsonic_error(f, ERROR_AUTH, &e);
+    }
+
+    let id_str = match &params.id {
+        Some(id) => id.clone(),
+        None => return subsonic_error(f, ERROR_MISSING_PARAM, "Missing 'id' parameter"),
+    };
+
+    // Strip prefix: al_ for album, tr_ for track
+    let (is_album, numeric_id_str) = if id_str.starts_with("al_") {
+        (true, id_str[3..].to_string())
+    } else if id_str.starts_with("tr_") {
+        (false, id_str[3..].to_string())
+    } else {
+        (false, id_str.clone())
+    };
+
+    let numeric_id = match numeric_id_str.parse::<i64>() {
+        Ok(n) => n,
+        Err(_) => return subsonic_error(f, ERROR_GENERIC, "Invalid ID"),
+    };
+
+    let path_opt = if is_album {
+        state.find_artwork_path(numeric_id).await
+    } else {
+        // For tracks, find album_id then artwork
+        let album_id_opt: Option<i64> = {
+            let user_pools = state.user_pools.read().await;
+            let mut found_aid = None;
+            for pool in user_pools.values() {
+                if let Ok(Some(r)) = sqlx::query("SELECT album_id FROM tracks WHERE id = ?")
+                    .bind(numeric_id).fetch_optional(pool).await
+                {
+                    found_aid = r.try_get("album_id").ok();
+                    break;
+                }
+            }
+            found_aid
+        }; // RwLock guard dropped here
+        if let Some(aid) = album_id_opt {
+            state.find_artwork_path(aid).await
+        } else {
+            None
+        }
+    };
+
+    match path_opt {
+        Some(p) => {
+            if let Ok(data) = tokio::fs::read(&p).await {
+                let mime = if p.ends_with(".png") { "image/png" } else { "image/jpeg" };
+                return (StatusCode::OK, [(header::CONTENT_TYPE, mime)], data).into_response();
+            }
+        }
+        None => {}
+    }
+
+    StatusCode::NOT_FOUND.into_response()
+}
+
+// GET/POST /rest/search3[.view] and search2
+pub async fn search3(
+    State(state): State<AppState>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    let f = params.f.as_deref().unwrap_or("xml");
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+    };
+
+    let query = params.query.as_deref().unwrap_or("").to_string();
+    let limit = params.size.unwrap_or(20).min(500);
+    let offset = params.offset.unwrap_or(0);
+    let like = format!("%{}%", query);
+
+    let songs = sqlx::query(
+        "SELECT id, title, artist, album, duration, bitrate, track_number FROM tracks WHERE title LIKE ? OR artist LIKE ? LIMIT ? OFFSET ?"
+    )
+    .bind(&like).bind(&like).bind(limit).bind(offset)
+    .fetch_all(&user_pool).await.unwrap_or_default();
+
+    let albums = sqlx::query(
+        "SELECT id, name, artist FROM albums WHERE name LIKE ? OR artist LIKE ? LIMIT ? OFFSET ?"
+    )
+    .bind(&like).bind(&like).bind(limit).bind(offset)
+    .fetch_all(&user_pool).await.unwrap_or_default();
+
+    let artists: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT artist FROM tracks WHERE artist LIKE ? LIMIT ?"
+    )
+    .bind(&like).bind(limit)
+    .fetch_all(&user_pool).await.unwrap_or_default();
+
+    if f == "json" {
+        let songs_json: Vec<_> = songs.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let title: String = r.try_get("title").unwrap_or_default();
+            let artist: String = r.try_get("artist").unwrap_or_default();
+            let album: String = r.try_get("album").unwrap_or_default();
+            let dur: i64 = r.try_get("duration").unwrap_or(0);
+            let bitrate: i64 = r.try_get("bitrate").unwrap_or(320);
+            serde_json::json!({ "id": format!("tr_{}", id), "title": title, "artist": artist, "album": album, "duration": dur, "bitRate": bitrate, "isDir": false, "coverArt": format!("tr_{}", id) })
+        }).collect();
+        let albums_json: Vec<_> = albums.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let name: String = r.try_get("name").unwrap_or_default();
+            let artist: String = r.try_get("artist").unwrap_or_default();
+            serde_json::json!({ "id": format!("al_{}", id), "name": name, "artist": artist, "isDir": true, "coverArt": format!("al_{}", id) })
+        }).collect();
+        let artists_json: Vec<_> = artists.iter().map(|a| {
+            serde_json::json!({ "id": format!("ar_{}", a), "name": a })
+        }).collect();
+        let body = serde_json::json!({
+            "subsonic-response": { "status": "ok", "version": "1.16.1",
+                "searchResult3": { "song": songs_json, "album": albums_json, "artist": artists_json }
+            }
+        });
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], Json(body)).into_response()
+    } else {
+        let songs_xml: String = songs.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let title: String = r.try_get("title").unwrap_or_default();
+            let artist: String = r.try_get("artist").unwrap_or_default();
+            let album: String = r.try_get("album").unwrap_or_default();
+            let dur: i64 = r.try_get("duration").unwrap_or(0);
+            let bitrate: i64 = r.try_get("bitrate").unwrap_or(320);
+            format!(r#"<song id="tr_{}" title="{}" artist="{}" album="{}" duration="{}" bitRate="{}" isDir="false" coverArt="tr_{}"/>"#,
+                id, escape_xml(&title), escape_xml(&artist), escape_xml(&album), dur, bitrate, id)
+        }).collect();
+        let albums_xml: String = albums.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let name: String = r.try_get("name").unwrap_or_default();
+            let artist: String = r.try_get("artist").unwrap_or_default();
+            format!(r#"<album id="al_{}" name="{}" artist="{}" isDir="true" coverArt="al_{}"/>"#,
+                id, escape_xml(&name), escape_xml(&artist), id)
+        }).collect();
+        let artists_xml: String = artists.iter().map(|a| {
+            format!(r#"<artist id="ar_{}" name="{}"/>"#, escape_xml(a), escape_xml(a))
+        }).collect();
+        let body = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1">
+  <searchResult3>{}{}{}</searchResult3>
+</subsonic-response>"#, songs_xml, albums_xml, artists_xml);
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
+    }
+}
+
+// GET/POST /rest/getAlbumList[.view] and getAlbumList2
+pub async fn get_album_list(
+    State(state): State<AppState>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    let f = params.f.as_deref().unwrap_or("xml");
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+    };
+
+    let list_type = params.list_type.as_deref().unwrap_or("newest");
+    let size = params.size.unwrap_or(10).min(500);
+    let offset = params.offset.unwrap_or(0);
+
+    let order = match list_type {
+        "alphabeticalByName" => "name ASC",
+        "alphabeticalByArtist" => "artist ASC",
+        "newest" | _ => "id DESC",
+    };
+
+    let albums = sqlx::query(&format!(
+        "SELECT id, name, artist FROM albums ORDER BY {} LIMIT ? OFFSET ?", order
+    ))
+    .bind(size).bind(offset)
+    .fetch_all(&user_pool).await.unwrap_or_default();
+
+    if f == "json" {
+        let list: Vec<_> = albums.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let name: String = r.try_get("name").unwrap_or_default();
+            let artist: String = r.try_get("artist").unwrap_or_default();
+            serde_json::json!({ "id": format!("al_{}", id), "name": name, "artist": artist, "isDir": true, "coverArt": format!("al_{}", id) })
+        }).collect();
+        let body = serde_json::json!({
+            "subsonic-response": { "status": "ok", "version": "1.16.1",
+                "albumList": { "album": list }
+            }
+        });
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], Json(body)).into_response()
+    } else {
+        let items: String = albums.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let name: String = r.try_get("name").unwrap_or_default();
+            let artist: String = r.try_get("artist").unwrap_or_default();
+            format!(r#"<album id="al_{}" name="{}" artist="{}" isDir="true" coverArt="al_{}"/>"#,
+                id, escape_xml(&name), escape_xml(&artist), id)
+        }).collect();
+        let body = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1">
+  <albumList>{}</albumList>
+</subsonic-response>"#, items);
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
+    }
+}
+
+// GET/POST /rest/getArtists[.view]
+pub async fn get_artists(
+    State(state): State<AppState>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    let f = params.f.as_deref().unwrap_or("xml");
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+    };
+
+    let artists: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT artist FROM tracks WHERE artist IS NOT NULL AND artist != '' ORDER BY artist ASC"
+    )
+    .fetch_all(&user_pool).await.unwrap_or_default();
+
+    if f == "json" {
+        let list: Vec<_> = artists.iter().map(|a| {
+            serde_json::json!({ "id": format!("ar_{}", a), "name": a, "albumCount": 0 })
+        }).collect();
+        let body = serde_json::json!({
+            "subsonic-response": { "status": "ok", "version": "1.16.1",
+                "artists": { "index": [{ "name": "#", "artist": list }] }
+            }
+        });
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], Json(body)).into_response()
+    } else {
+        let artists_xml: String = artists.iter().map(|a| {
+            format!(r#"<artist id="ar_{}" name="{}" albumCount="0"/>"#, escape_xml(a), escape_xml(a))
+        }).collect();
+        let body = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1">
+  <artists><index name="#">{}</index></artists>
+</subsonic-response>"#, artists_xml);
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
+    }
+}
+
+// GET/POST /rest/getArtist[.view]
+pub async fn get_artist(
+    State(state): State<AppState>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    let f = params.f.as_deref().unwrap_or("xml");
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+    };
+
+    let id_str = match &params.id {
+        Some(id) => id.clone(),
+        None => return subsonic_error(f, ERROR_MISSING_PARAM, "Missing 'id'"),
+    };
+    // ar_ prefix or bare name
+    let artist_name = if id_str.starts_with("ar_") { id_str[3..].to_string() } else { id_str };
+
+    let albums = sqlx::query(
+        "SELECT id, name, artist FROM albums WHERE artist = ? ORDER BY name ASC"
+    )
+    .bind(&artist_name)
+    .fetch_all(&user_pool).await.unwrap_or_default();
+
+    if f == "json" {
+        let alb_list: Vec<_> = albums.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let name: String = r.try_get("name").unwrap_or_default();
+            serde_json::json!({ "id": format!("al_{}", id), "name": name, "artist": artist_name, "isDir": true })
+        }).collect();
+        let body = serde_json::json!({
+            "subsonic-response": { "status": "ok", "version": "1.16.1",
+                "artist": { "id": format!("ar_{}", artist_name), "name": artist_name, "album": alb_list }
+            }
+        });
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], Json(body)).into_response()
+    } else {
+        let alb_xml: String = albums.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let name: String = r.try_get("name").unwrap_or_default();
+            format!(r#"<album id="al_{}" name="{}" artist="{}" isDir="true"/>"#,
+                id, escape_xml(&name), escape_xml(&artist_name))
+        }).collect();
+        let body = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1">
+  <artist id="ar_{}" name="{}">{}</artist>
+</subsonic-response>"#, escape_xml(&artist_name), escape_xml(&artist_name), alb_xml);
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
+    }
+}
+
+// GET/POST /rest/getAlbum[.view]
+pub async fn get_album(
+    State(state): State<AppState>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    let f = params.f.as_deref().unwrap_or("xml");
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+    };
+
+    let id_str = match &params.id {
+        Some(id) => id.clone(),
+        None => return subsonic_error(f, ERROR_MISSING_PARAM, "Missing 'id'"),
+    };
+    let numeric_id_str = if id_str.starts_with("al_") { id_str[3..].to_string() } else { id_str };
+    let album_id = match numeric_id_str.parse::<i64>() {
+        Ok(n) => n,
+        Err(_) => return subsonic_error(f, ERROR_GENERIC, "Invalid album ID"),
+    };
+
+    let album_row = sqlx::query("SELECT id, name, artist FROM albums WHERE id = ?")
+        .bind(album_id).fetch_optional(&user_pool).await.unwrap_or(None);
+    let album_row = match album_row {
+        Some(r) => r,
+        None => return subsonic_error(f, ERROR_GENERIC, "Album not found"),
+    };
+    let album_name: String = album_row.try_get("name").unwrap_or_default();
+    let album_artist: String = album_row.try_get("artist").unwrap_or_default();
+
+    let songs = sqlx::query(
+        "SELECT id, title, artist, album, duration, bitrate, track_number FROM tracks WHERE album_id = ? ORDER BY track_number ASC"
+    )
+    .bind(album_id).fetch_all(&user_pool).await.unwrap_or_default();
+
+    if f == "json" {
+        let songs_json: Vec<_> = songs.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let title: String = r.try_get("title").unwrap_or_default();
+            let artist: String = r.try_get("artist").unwrap_or_default();
+            let dur: i64 = r.try_get("duration").unwrap_or(0);
+            let bitrate: i64 = r.try_get("bitrate").unwrap_or(320);
+            let track_num: i64 = r.try_get("track_number").unwrap_or(0);
+            serde_json::json!({ "id": format!("tr_{}", id), "title": title, "artist": artist, "album": album_name, "duration": dur, "bitRate": bitrate, "track": track_num, "isDir": false, "coverArt": format!("al_{}", album_id) })
+        }).collect();
+        let body = serde_json::json!({
+            "subsonic-response": { "status": "ok", "version": "1.16.1",
+                "album": { "id": format!("al_{}", album_id), "name": album_name, "artist": album_artist, "song": songs_json }
+            }
+        });
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], Json(body)).into_response()
+    } else {
+        let songs_xml: String = songs.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let title: String = r.try_get("title").unwrap_or_default();
+            let artist: String = r.try_get("artist").unwrap_or_default();
+            let dur: i64 = r.try_get("duration").unwrap_or(0);
+            let bitrate: i64 = r.try_get("bitrate").unwrap_or(320);
+            let track_num: i64 = r.try_get("track_number").unwrap_or(0);
+            format!(r#"<song id="tr_{}" title="{}" artist="{}" album="{}" duration="{}" bitRate="{}" track="{}" isDir="false" coverArt="al_{}"/>"#,
+                id, escape_xml(&title), escape_xml(&artist), escape_xml(&album_name), dur, bitrate, track_num, album_id)
+        }).collect();
+        let body = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1">
+  <album id="al_{}" name="{}" artist="{}">{}</album>
+</subsonic-response>"#, album_id, escape_xml(&album_name), escape_xml(&album_artist), songs_xml);
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
+    }
+}
+
+// GET/POST /rest/getStarred[.view] and getStarred2
+pub async fn get_starred(
+    State(state): State<AppState>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    let f = params.f.as_deref().unwrap_or("xml");
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+    };
+
+    let liked = sqlx::query(
+        "SELECT t.id, t.title, t.artist, t.album, t.duration, t.bitrate FROM tracks t INNER JOIN liked_tracks lt ON t.id = lt.track_id WHERE lt.user_id = ? ORDER BY lt.liked_at DESC"
+    )
+    .bind(&user.id)
+    .fetch_all(&user_pool).await.unwrap_or_default();
+
+    if f == "json" {
+        let songs: Vec<_> = liked.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let title: String = r.try_get("title").unwrap_or_default();
+            let artist: String = r.try_get("artist").unwrap_or_default();
+            let album: String = r.try_get("album").unwrap_or_default();
+            let dur: i64 = r.try_get("duration").unwrap_or(0);
+            let bitrate: i64 = r.try_get("bitrate").unwrap_or(320);
+            serde_json::json!({ "id": format!("tr_{}", id), "title": title, "artist": artist, "album": album, "duration": dur, "bitRate": bitrate, "isDir": false })
+        }).collect();
+        let body = serde_json::json!({
+            "subsonic-response": { "status": "ok", "version": "1.16.1",
+                "starred": { "song": songs }
+            }
+        });
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], Json(body)).into_response()
+    } else {
+        let songs_xml: String = liked.iter().map(|r| {
+            let id: i64 = r.try_get("id").unwrap_or(0);
+            let title: String = r.try_get("title").unwrap_or_default();
+            let artist: String = r.try_get("artist").unwrap_or_default();
+            let album: String = r.try_get("album").unwrap_or_default();
+            let dur: i64 = r.try_get("duration").unwrap_or(0);
+            let bitrate: i64 = r.try_get("bitrate").unwrap_or(320);
+            format!(r#"<song id="tr_{}" title="{}" artist="{}" album="{}" duration="{}" bitRate="{}" isDir="false"/>"#,
+                id, escape_xml(&title), escape_xml(&artist), escape_xml(&album), dur, bitrate)
+        }).collect();
+        let body = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1">
+  <starred>{}</starred>
+</subsonic-response>"#, songs_xml);
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
+    }
+}
+
+// GET/POST /rest/star[.view]  — star a track (maps to liked_tracks)
+pub async fn star(
+    State(state): State<AppState>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    let f = params.f.as_deref().unwrap_or("xml");
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+    };
+
+    if let Some(id_str) = &params.id {
+        let numeric = if id_str.starts_with("tr_") { &id_str[3..] } else { id_str.as_str() };
+        if let Ok(track_id) = numeric.parse::<i64>() {
+            let _ = sqlx::query("INSERT OR IGNORE INTO liked_tracks (user_id, track_id) VALUES (?, ?)")
+                .bind(&user.id).bind(track_id).execute(&user_pool).await;
+        }
+    }
+
+    if f == "json" {
+        let body = serde_json::json!({ "subsonic-response": { "status": "ok", "version": "1.16.1" } });
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], Json(body)).into_response()
+    } else {
+        let body = r#"<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1"/>"#;
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
+    }
+}
+
+// GET/POST /rest/unstar[.view]
+pub async fn unstar(
+    State(state): State<AppState>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    let f = params.f.as_deref().unwrap_or("xml");
+    let user = match authenticate(&state, &params).await {
+        Ok(u) => u,
+        Err(e) => return subsonic_error(f, ERROR_AUTH, &e),
+    };
+    let user_pool = match state.get_user_pool(&user.id).await {
+        Ok(p) => p,
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+    };
+
+    if let Some(id_str) = &params.id {
+        let numeric = if id_str.starts_with("tr_") { &id_str[3..] } else { id_str.as_str() };
+        if let Ok(track_id) = numeric.parse::<i64>() {
+            let _ = sqlx::query("DELETE FROM liked_tracks WHERE user_id = ? AND track_id = ?")
+                .bind(&user.id).bind(track_id).execute(&user_pool).await;
+        }
+    }
+
+    if f == "json" {
+        let body = serde_json::json!({ "subsonic-response": { "status": "ok", "version": "1.16.1" } });
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], Json(body)).into_response()
+    } else {
+        let body = r#"<?xml version="1.0" encoding="UTF-8"?>
+<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1"/>"#;
+        (StatusCode::OK, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
+    }
 }
