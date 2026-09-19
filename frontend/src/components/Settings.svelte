@@ -658,46 +658,58 @@
 
 <div class="settings-container">
   <!-- Tab navigation -->
-  <div class="settings-tabs">
-    <button 
-      onclick={() => activeTab = 'profile'} 
+  <div class="settings-tabs" role="tablist">
+    <button
+      onclick={() => activeTab = 'profile'}
       class="tab-btn {activeTab === 'profile' ? 'active' : ''}"
+      role="tab"
+      aria-selected={activeTab === 'profile'}
     >
       <User size={16} /> Profile Settings
     </button>
     {#if role === 'Admin'}
-      <button 
-        onclick={() => activeTab = 'users'} 
+      <button
+        onclick={() => activeTab = 'users'}
         class="tab-btn {activeTab === 'users' ? 'active' : ''}"
+        role="tab"
+        aria-selected={activeTab === 'users'}
       >
         <Users size={16} /> User Management
       </button>
-      <button 
-        onclick={() => activeTab = 'storage'} 
+      <button
+        onclick={() => activeTab = 'storage'}
         class="tab-btn {activeTab === 'storage' ? 'active' : ''}"
+        role="tab"
+        aria-selected={activeTab === 'storage'}
       >
         <Database size={16} /> Storage Settings
       </button>
     {/if}
     {#if role !== 'StreamOnly'}
-    <button 
-      onclick={() => activeTab = 'library'} 
+    <button
+      onclick={() => activeTab = 'library'}
       class="tab-btn {activeTab === 'library' ? 'active' : ''}"
+      role="tab"
+      aria-selected={activeTab === 'library'}
     >
       <FolderSync size={16} /> Library Control
     </button>
     {/if}
     {#if role === 'Admin'}
-      <button 
-        onclick={() => activeTab = 'tunnel'} 
+      <button
+        onclick={() => activeTab = 'tunnel'}
         class="tab-btn {activeTab === 'tunnel' ? 'active' : ''}"
+        role="tab"
+        aria-selected={activeTab === 'tunnel'}
       >
         <Globe size={16} /> Public Access
       </button>
     {/if}
-    <button 
-      onclick={() => activeTab = 'system'} 
+    <button
+      onclick={() => activeTab = 'system'}
       class="tab-btn {activeTab === 'system' ? 'active' : ''}"
+      role="tab"
+      aria-selected={activeTab === 'system'}
     >
       <Cpu size={16} /> System & Info
     </button>
@@ -708,7 +720,7 @@
     <div style="display: flex; flex-direction: column; gap: 1.5rem;">
       <div class="glass-card" style="display: flex; justify-content: space-between; align-items: center; padding: 1.5rem;">
         <div style="display: flex; align-items: center; gap: 1rem;">
-          <div style="background: rgba(168,85,247,0.1); padding: 0.75rem; border-radius: 10px; color: var(--accent);">
+          <div style="background: var(--accent-purple-bg); padding: 0.75rem; border-radius: 10px; color: var(--accent);">
             <Shield size={24} />
           </div>
           <div>
@@ -919,12 +931,13 @@
       <!-- User Search filter bar -->
       <div class="glass-card" style="padding: 1rem; display: flex; align-items: center; gap: 0.5rem; position: relative;">
         <Search size={18} style="position: absolute; left: 1.75rem; color: var(--text-secondary);" />
-        <input 
-          type="text" 
-          class="form-input" 
-          placeholder="Search users by username or role..." 
-          style="width: 100%; padding-left: 2.75rem;" 
+        <input
+          type="text"
+          class="form-input"
+          placeholder="Search users by username or role..."
+          style="width: 100%; padding-left: 2.75rem;"
           bind:value={userSearchQuery}
+          aria-label="Search users"
         />
       </div>
 
@@ -956,20 +969,20 @@
                   <tr>
                     <td style="padding: 0.75rem; vertical-align: middle;">
                       {#if editingUserId === u.id}
-                        <input type="text" class="form-input" style="padding: 0.35rem 0.5rem; font-size: 0.85rem;" bind:value={editUsername} />
+                        <input type="text" class="form-input" style="padding: 0.35rem 0.5rem; font-size: 0.85rem;" bind:value={editUsername} aria-label={`Username for ${u.username}`} />
                       {:else}
                         <span style="font-weight: 500; color: var(--text-primary);">{u.username}</span>
                       {/if}
                     </td>
                     <td style="padding: 0.75rem; vertical-align: middle;">
                       {#if editingUserId === u.id}
-                        <select class="form-input" style="padding: 0.35rem; font-size: 0.85rem; height: auto;" bind:value={editRole}>
+                        <select class="form-input" style="padding: 0.35rem; font-size: 0.85rem; height: auto;" bind:value={editRole} aria-label={`Role for ${u.username}`}>
                           <option value="Admin">Admin</option>
                           <option value="User">User</option>
                           <option value="StreamOnly">StreamOnly</option>
                         </select>
                       {:else if u.role === 'Admin'}
-                        <span style="font-size: 0.75rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; letter-spacing: 0.05em;">Admin</span>
+                        <span style="font-size: 0.75rem; text-transform: uppercase; background: var(--accent-purple-bg); color: var(--accent-purple); border: 1px solid var(--accent-purple-border); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; letter-spacing: 0.05em;">Admin</span>
                       {:else if u.role === 'User'}
                         <span style="font-size: 0.75rem; text-transform: uppercase; background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; letter-spacing: 0.05em;">User</span>
                       {:else}
@@ -1235,7 +1248,7 @@
               <span style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block;"></span> Active
             </span>
           {:else if tunnelStatus.is_connecting}
-            <span style="background: rgba(168,85,247,0.1); color: var(--accent); padding: 0.35rem 0.75rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem; border: 1px solid rgba(168,85,247,0.2);">
+            <span style="background: var(--accent-purple-bg); color: var(--accent); padding: 0.35rem 0.75rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem; border: 1px solid var(--accent-purple-border);">
               <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; animation: pulse 1.5s infinite;"></span> Connecting...
             </span>
           {:else}
@@ -1620,7 +1633,7 @@
                       <td style="padding: 0.75rem; font-weight: 600; color: var(--text-primary);">{stat.username}</td>
                       <td style="padding: 0.75rem;">
                         {#if stat.role === 'Admin'}
-                          <span style="font-size: 0.7rem; text-transform: uppercase; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.2); padding: 0.1rem 0.35rem; border-radius: 4px; font-weight: 600;">Admin</span>
+                          <span style="font-size: 0.7rem; text-transform: uppercase; background: var(--accent-purple-bg); color: var(--accent-purple); border: 1px solid var(--accent-purple-border); padding: 0.1rem 0.35rem; border-radius: 4px; font-weight: 600;">Admin</span>
                         {:else if stat.role === 'User'}
                           <span style="font-size: 0.7rem; text-transform: uppercase; background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.2); padding: 0.1rem 0.35rem; border-radius: 4px; font-weight: 600;">User</span>
                         {:else}
@@ -1670,7 +1683,7 @@
       </div>
 
       <div class="glass-card" style="display: flex; gap: 1rem; align-items: flex-start; padding: 1.5rem;">
-        <div style="background: rgba(168,85,247,0.1); padding: 0.75rem; border-radius: 10px; color: var(--accent); flex-shrink: 0;">
+        <div style="background: var(--accent-purple-bg); padding: 0.75rem; border-radius: 10px; color: var(--accent); flex-shrink: 0;">
           <HelpCircle size={24} />
         </div>
         <div style="font-size: 0.9rem; line-height: 1.5;">
@@ -1727,7 +1740,8 @@
     background: transparent;
     border: none;
     color: var(--text-secondary);
-    padding: 0.6rem 1rem;
+    padding: 0.75rem 1rem;
+    min-height: 44px;
     border-radius: 6px;
     font-size: 0.9rem;
     font-weight: 500;
@@ -1745,7 +1759,7 @@
   }
 
   .tab-btn.active {
-    background: rgba(168, 85, 247, 0.1);
+    background: var(--accent-purple-bg);
     color: var(--accent);
     font-weight: 600;
   }
@@ -1773,6 +1787,21 @@
     }
   }
 
+  @media (max-width: 540px) {
+    .modal-content {
+      padding: 1.25rem;
+      border-radius: 12px 12px 0 0;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      max-width: 100vw;
+      max-height: 90vh;
+      overflow-y: auto;
+      margin: 0;
+    }
+  }
+
   .console-box {
     margin-top: 1rem;
     background: #060608;
@@ -1797,7 +1826,7 @@
     white-space: pre-wrap;
     line-height: 1.4;
     word-break: break-all;
-    border-left: 2px solid rgba(168,85,247,0.3);
+    border-left: 2px solid var(--accent-purple-border);
     padding-left: 0.5rem;
   }
 

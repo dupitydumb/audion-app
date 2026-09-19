@@ -2,18 +2,28 @@
   import { Upload, FileMusic, CheckCircle2, AlertCircle, RefreshCw } from '@lucide/svelte';
   import { addFilesToQueue, clearCompleted, summarizeQueue, uploadQueue } from '../stores/uploadQueue';
 
+  let { setActiveTab = null } = $props<{ setActiveTab?: ((tab: string) => void) | null }>();
+
   let isDragging = $state(false);
   let fileInputRef = $state<HTMLInputElement | null>(null);
 
   let queueSummary = $derived(summarizeQueue($uploadQueue));
+
+  let allDone = $derived(
+    $uploadQueue.length > 0 &&
+    $uploadQueue.every(item => item.status === 'success' || item.status === 'error' || item.status === 'duplicate')
+  );
+  let successCount = $derived($uploadQueue.filter(i => i.status === 'success').length);
 
   function handleDragOver(e: DragEvent) {
     e.preventDefault();
     isDragging = true;
   }
 
-  function handleDragLeave() {
-    isDragging = false;
+  function handleDragLeave(e: DragEvent) {
+    if (!e.currentTarget || !(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
+      isDragging = false;
+    }
   }
 
   function handleDrop(e: DragEvent) {
@@ -115,9 +125,14 @@
                     <AlertCircle size={14} /> Duplicate Skipped
                   </span>
                 {:else if item.status === 'error'}
-                  <span style="color: var(--danger); display: flex; align-items: center; gap: 0.25rem;" title={item.errorMsg}>
-                    <AlertCircle size={14} /> Failed
-                  </span>
+                  <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.15rem;">
+                    <span class="upload-status-error" style="color: var(--danger); display: flex; align-items: center; gap: 0.25rem;">
+                      <AlertCircle size={14} /> Failed
+                    </span>
+                    {#if item.errorMsg}
+                      <p class="upload-error-detail">{item.errorMsg}</p>
+                    {/if}
+                  </div>
                 {/if}
               </div>
             </div>
@@ -132,6 +147,15 @@
         {/each}
       </div>
     </div>
+
+    {#if allDone && successCount > 0}
+      <div class="glass-card" style="margin-top: 1rem; padding: 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+        <span style="color: var(--text-primary); font-weight: 500;">✓ {successCount} track{successCount !== 1 ? 's' : ''} uploaded successfully</span>
+        <button onclick={() => setActiveTab?.('library')} class="btn btn-primary" style="font-size: 0.85rem;">
+          View in Library →
+        </button>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -139,5 +163,14 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  .upload-error-detail {
+    font-size: 0.75rem;
+    color: var(--danger, #f87171);
+    margin: 0.25rem 0 0;
+    word-break: break-word;
+    text-align: right;
+    max-width: 200px;
   }
 </style>

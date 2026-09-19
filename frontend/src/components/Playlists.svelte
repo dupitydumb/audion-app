@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Play, Pause, Trash2, ListMusic, Plus, ArrowLeft, ArrowUp, ArrowDown, Music, AlertCircle, RefreshCw, MoreVertical } from '@lucide/svelte';
+  import ConfirmModal from './ConfirmModal.svelte';
 
   let { token, role, currentPlayingId, isPlaying, onPlayTrack, addToast, isMobile, openActionSheet } = $props<{
     token: string;
@@ -35,6 +36,7 @@
   let isLoading = $state(true);
   let newPlaylistName = $state('');
   let isCreating = $state(false);
+  let confirmModal = $state({ show: false, title: '', message: '', onConfirm: () => {} });
 
   // Detail View State
   let selectedPlaylist = $state<Playlist | null>(null);
@@ -82,22 +84,28 @@
   }
 
   async function deletePlaylist(id: number, name: string) {
-    if (!confirm(`Are you sure you want to delete the playlist "${name}"?`)) return;
-
-    try {
-      const res = await fetch(`/api/playlists/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('Failed to delete playlist');
-      addToast('Playlist deleted', 'success');
-      if (selectedPlaylist?.id === id) {
-        selectedPlaylist = null;
+    confirmModal = {
+      show: true,
+      title: 'Delete Playlist',
+      message: `Delete playlist "${name}"? This cannot be undone.`,
+      onConfirm: async () => {
+        confirmModal = { ...confirmModal, show: false };
+        try {
+          const res = await fetch(`/api/playlists/${id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (!res.ok) throw new Error('Failed to delete playlist');
+          addToast('Playlist deleted', 'success');
+          if (selectedPlaylist?.id === id) {
+            selectedPlaylist = null;
+          }
+          fetchPlaylists();
+        } catch (err: any) {
+          addToast(err.message || 'Failed to delete playlist', 'error');
+        }
       }
-      fetchPlaylists();
-    } catch (err: any) {
-      addToast(err.message || 'Failed to delete playlist', 'error');
-    }
+    };
   }
 
   async function fetchPlaylistTracks(playlistId: number) {
@@ -122,19 +130,25 @@
 
   async function removeTrackFromPlaylist(trackId: number, title: string | null) {
     if (!selectedPlaylist) return;
-    if (!confirm(`Remove "${title || 'this track'}" from playlist?`)) return;
-
-    try {
-      const res = await fetch(`/api/playlists/${selectedPlaylist.id}/tracks/${trackId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('Failed to remove track');
-      addToast('Track removed', 'success');
-      fetchPlaylistTracks(selectedPlaylist.id);
-    } catch (err: any) {
-      addToast(err.message || 'Failed to remove track', 'error');
-    }
+    confirmModal = {
+      show: true,
+      title: 'Remove Track',
+      message: `Remove "${title || 'this track'}" from playlist?`,
+      onConfirm: async () => {
+        confirmModal = { ...confirmModal, show: false };
+        try {
+          const res = await fetch(`/api/playlists/${selectedPlaylist!.id}/tracks/${trackId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (!res.ok) throw new Error('Failed to remove track');
+          addToast('Track removed', 'success');
+          fetchPlaylistTracks(selectedPlaylist!.id);
+        } catch (err: any) {
+          addToast(err.message || 'Failed to remove track', 'error');
+        }
+      }
+    };
   }
 
   async function moveTrack(index: number, direction: 'up' | 'down') {
@@ -450,6 +464,15 @@
     {/if}
   </div>
 {/if}
+
+<ConfirmModal
+  show={confirmModal.show}
+  title={confirmModal.title}
+  message={confirmModal.message}
+  isDanger={true}
+  onConfirm={confirmModal.onConfirm}
+  onCancel={() => confirmModal = { ...confirmModal, show: false }}
+/>
 
 <style>
   @keyframes spin {
