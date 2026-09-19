@@ -887,7 +887,7 @@ pub async fn search3(
     };
     let user_pool = match state.get_user_pool(&user.id).await {
         Ok(p) => p,
-        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e.to_string()),
     };
 
     let query = params.query.as_deref().unwrap_or("").to_string();
@@ -979,7 +979,7 @@ pub async fn get_album_list(
     };
     let user_pool = match state.get_user_pool(&user.id).await {
         Ok(p) => p,
-        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e.to_string()),
     };
 
     let list_type = params.list_type.as_deref().unwrap_or("newest");
@@ -1039,7 +1039,7 @@ pub async fn get_artists(
     };
     let user_pool = match state.get_user_pool(&user.id).await {
         Ok(p) => p,
-        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e.to_string()),
     };
 
     let artists: Vec<String> = sqlx::query_scalar(
@@ -1081,7 +1081,7 @@ pub async fn get_artist(
     };
     let user_pool = match state.get_user_pool(&user.id).await {
         Ok(p) => p,
-        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e.to_string()),
     };
 
     let id_str = match &params.id {
@@ -1136,7 +1136,7 @@ pub async fn get_album(
     };
     let user_pool = match state.get_user_pool(&user.id).await {
         Ok(p) => p,
-        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e.to_string()),
     };
 
     let id_str = match &params.id {
@@ -1210,7 +1210,7 @@ pub async fn get_starred(
     };
     let user_pool = match state.get_user_pool(&user.id).await {
         Ok(p) => p,
-        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e.to_string()),
     };
 
     let liked = sqlx::query(
@@ -1266,7 +1266,7 @@ pub async fn star(
     };
     let user_pool = match state.get_user_pool(&user.id).await {
         Ok(p) => p,
-        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e.to_string()),
     };
 
     if let Some(id_str) = &params.id {
@@ -1299,7 +1299,7 @@ pub async fn unstar(
     };
     let user_pool = match state.get_user_pool(&user.id).await {
         Ok(p) => p,
-        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e),
+        Err(e) => return subsonic_error(f, ERROR_GENERIC, &e.to_string()),
     };
 
     if let Some(id_str) = &params.id {
