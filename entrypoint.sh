@@ -21,8 +21,10 @@ if [ "$(id -u audion)" -ne "$PUID" ]; then
 fi
 
 # Ensure correct permissions on data and application directories
-echo "Fixing ownership for /data and /app..."
-chown -R audion:audion /data /app
+if [ "$PUID" != "10001" ] || [ "$PGID" != "10001" ]; then
+    echo "Fixing ownership for /data and /app..."
+    chown -R audion:audion /data /app
+fi
 
 # Drop privileges and run the main command
 echo "Launching audion-server as non-root user..."

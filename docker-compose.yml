@@ -8,19 +8,22 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data
+    env_file: .env
     environment:
-      - AUDION_ADMIN_USER=admin
-      - AUDION_ADMIN_PASSWORD=changeme
-      - AUDION_JWT_SECRET=your-secret-key-here-change-this-in-production
       - AUDION_DATA_DIR=/data
       - AUDION_PORT=8080
       - RUST_LOG=info
       - AUDION_JWT_EXPIRATION_DAYS=7
       - AUDION_CORS_ORIGIN=*
       - AUDION_MAX_BODY_SIZE=262144000
-      - AUDION_PUBLIC_DIR=/app/frontend/dist
       - PUID=10001
       - PGID=10001
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   audion-frontend:
@@ -30,5 +33,6 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - audion-server
+      audion-server:
+        condition: service_healthy
     restart: unless-stopped

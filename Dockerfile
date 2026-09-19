@@ -40,13 +40,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     curl \
     gnupg \
+    # cloudflared pinned to 2024.12.2 for reproducible builds; update deliberately
     && ARCH=$(dpkg --print-architecture) \
-    && curl -L -o /tmp/cloudflared.deb "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}.deb" \
+    && curl -L -o /tmp/cloudflared.deb "https://github.com/cloudflare/cloudflared/releases/download/2024.12.2/cloudflared-linux-${ARCH}.deb" \
     && dpkg -i /tmp/cloudflared.deb \
     && rm /tmp/cloudflared.deb \
     && curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null \
     && echo "deb https://ngrok-agent.s3.amazonaws.com/ buster main" | tee /etc/apt/sources.list.d/ngrok.list \
     && apt-get update \
+    # ponytail: ngrok version unpinned via apt; pin by switching to direct binary download when supply-chain matters
     && apt-get install -y ngrok \
     && rm -rf /var/lib/apt/lists/*
 
@@ -60,13 +62,9 @@ EXPOSE 8080
 ENV AUDION_DATA_DIR=/data
 ENV AUDION_PORT=8080
 ENV RUST_LOG=info
-ENV AUDION_ADMIN_USER=admin
-ENV AUDION_ADMIN_PASSWORD=changeme
-ENV AUDION_JWT_SECRET=your-secret-key-here-change-this-in-production
 ENV AUDION_JWT_EXPIRATION_DAYS=7
 ENV AUDION_CORS_ORIGIN=*
 ENV AUDION_MAX_BODY_SIZE=262144000
-ENV AUDION_PUBLIC_DIR=/app/frontend/dist
 
 # Define data volume
 VOLUME /data

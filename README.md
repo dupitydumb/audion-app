@@ -51,7 +51,6 @@ Audion Server is configured using environment variables. When starting, the back
 | `AUDION_ADMIN_PASSWORD` | Initial password for the bootstrapped administrator | `changeme` |
 | `AUDION_JWT_SECRET` | Secret key used for signing JWT tokens | `your-secret-key-here-super-secure` |
 | `AUDION_DATA_DIR` | Directory where SQLite database, tracks, and artwork are stored | `./data` |
-| `AUDION_PUBLIC_DIR` | Directory containing built frontend static files (for single-binary mode) | `./frontend/dist` |
 | `AUDION_JWT_EXPIRATION_DAYS` | Number of days before a issued JWT token expires | `7` |
 | `AUDION_CORS_ORIGIN` | CORS allowed origins (e.g. `*` or a specific URL) | `*` |
 | `AUDION_MAX_BODY_SIZE` | Maximum allowed request body size in bytes (e.g. for uploads) | `262144000` (250MB) |
@@ -65,58 +64,37 @@ Audion Server is configured using environment variables. When starting, the back
 
 Audion Server comes with a preconfigured `docker-compose.yml` for multi-container orchestration.
 
-1.  **Verify or Edit `docker-compose.yml`**
-    Ensure the ports are mapped correctly on your host machine. For example, to expose the frontend on port `80` and the backend on `8080`, check or edit `docker-compose.yml` to specify:
-    ```yaml
-    version: '3.8'
+**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Docker Compose).
 
-    services:
-      audion-server:
-        build:
-          context: .
-          dockerfile: Dockerfile
-        ports:
-          - "8080:8080" # Map backend port to host
-        volumes:
-          - ./data:/data
-        environment:
-          - AUDION_ADMIN_USER=admin
-          - AUDION_ADMIN_PASSWORD=securepasswordhere # Change this!
-          - AUDION_JWT_SECRET=use-a-strong-jwt-secret-here # Change this!
-          - AUDION_DATA_DIR=/data
-          - AUDION_PORT=8080
-          - RUST_LOG=info
-        restart: unless-stopped
+1.  **Configure your environment**
 
-      audion-frontend:
-        build:
-          context: ./frontend
-          dockerfile: Dockerfile
-        ports:
-          - "80:80" # Map frontend port to host
-        depends_on:
-          - audion-server
-        restart: unless-stopped
+    Copy the example env file and fill in your own values:
+    ```bash
+    cp .env.example .env
     ```
+    Then open `.env` and set:
+    ```env
+    AUDION_ADMIN_USER=admin
+    AUDION_ADMIN_PASSWORD=your-secure-password
+    AUDION_JWT_SECRET=a-long-random-string
+    ```
+    > [!IMPORTANT]
+    > Never commit `.env` to version control. It is already listed in `.gitignore`.
 
-2.  **Start the Containers**
-    Run the following command in the root directory:
+2.  **Start the stack**
     ```bash
     docker compose up --build -d
     ```
-    This compiles the Rust backend inside a slim Debian image, builds the Svelte frontend, and launches the services with Nginx routing requests from `/api/` to the backend.
+    This builds the Rust backend and Svelte frontend, then launches both containers. The frontend waits for the backend to be healthy before starting.
 
-3.  **Access the Application**
-    Open your browser and navigate to `http://localhost`. Log in using your configured administrator credentials.
+3.  **Access the application**
+
+    Open `http://localhost` in your browser and log in with the credentials you set in `.env`.
 
 > [!TIP]
-> **Permission Issues with Database Writes (SQLite Error Code 8)**
-> If you encounter a `500 Internal Server Error` with `attempt to write a readonly database` when performing writes (e.g., toggling liked tracks, creating playlists), it means the SQLite database files or subdirectories under `/data` are owned by `root` instead of the non-root `audion` user (UID 10001) that the server runs as.
->
-> You can fix this by running the following command to correct ownership in the running container:
-> ```bash
-> docker exec -u root audion-server-docker-audion-server-1 chown -R audion:audion /data
-> ```
+> To watch live logs: `docker compose logs -f`
+> To stop: `docker compose down`
+> To stop and delete data: `docker compose down -v`
 
 ---
 
