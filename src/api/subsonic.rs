@@ -457,9 +457,9 @@ pub async fn get_music_directory(
             let mut children = Vec::new();
             for r in track_rows {
                 let tr_id: i64 = r.get("id");
-                let title: String = r.get("title");
-                let artist: String = r.get("artist");
-                let album: String = r.get("album");
+                let title: String = r.try_get("title").unwrap_or_default();
+                let artist: String = r.try_get("artist").unwrap_or_default();
+                let album: String = r.try_get("album").unwrap_or_default();
                 let tr_num: Option<i32> = r.get("track_number");
                 let duration: Option<i32> = r.get("duration");
                 let format: Option<String> = r.get("format");
@@ -478,7 +478,7 @@ pub async fn get_music_directory(
                     "duration": duration.unwrap_or(0),
                     "size": size.unwrap_or(0),
                     "suffix": format_str,
-                    "bitRate": bitrate.unwrap_or(320000) / 1000,
+                    "bitRate": bitrate.unwrap_or(320), // stored as kbps by lofty
                     "contentType": mime_guess::from_path(format_str).first_or_octet_stream().to_string()
                 }));
             }
@@ -499,9 +499,9 @@ pub async fn get_music_directory(
             let mut xml_children = String::new();
             for r in track_rows {
                 let tr_id: i64 = r.get("id");
-                let title: String = r.get("title");
-                let artist: String = r.get("artist");
-                let album: String = r.get("album");
+                let title: String = r.try_get("title").unwrap_or_default();
+                let artist: String = r.try_get("artist").unwrap_or_default();
+                let album: String = r.try_get("album").unwrap_or_default();
                 let tr_num: Option<i32> = r.get("track_number");
                 let duration: Option<i32> = r.get("duration");
                 let format: Option<String> = r.get("format");
@@ -520,7 +520,7 @@ pub async fn get_music_directory(
                     duration.unwrap_or(0),
                     size.unwrap_or(0),
                     format_str,
-                    bitrate.unwrap_or(320000) / 1000,
+                    bitrate.unwrap_or(320), // stored as kbps by lofty
                     mime_guess::from_path(format_str).first_or_octet_stream().to_string()
                 ));
             }
@@ -557,7 +557,8 @@ pub async fn get_song(
     };
 
     let song_id_str = match &params.id {
-        Some(id) if id.starts_with("tr_") => &id[3..],
+        Some(id) if id.starts_with("tr_") => id[3..].to_string(),
+        Some(id) if !id.is_empty() => id.clone(),
         _ => return subsonic_error(f, ERROR_MISSING_PARAM, "Missing track parameter 'id'"),
     };
 
@@ -579,9 +580,9 @@ pub async fn get_song(
         _ => return subsonic_error(f, ERROR_GENERIC, "Song not found"),
     };
 
-    let title: String = track_row.get("title");
-    let artist: String = track_row.get("artist");
-    let album: String = track_row.get("album");
+    let title: String = track_row.try_get("title").unwrap_or_default();
+    let artist: String = track_row.try_get("artist").unwrap_or_default();
+    let album: String = track_row.try_get("album").unwrap_or_default();
     let alb_id: Option<i64> = track_row.get("album_id");
     let tr_num: Option<i32> = track_row.get("track_number");
     let duration: Option<i32> = track_row.get("duration");
@@ -606,7 +607,7 @@ pub async fn get_song(
                     "duration": duration.unwrap_or(0),
                     "size": size.unwrap_or(0),
                     "suffix": format_str,
-                    "bitRate": bitrate.unwrap_or(320000) / 1000,
+                    "bitRate": bitrate.unwrap_or(320), // stored as kbps by lofty
                     "contentType": mime_guess::from_path(format_str).first_or_octet_stream().to_string()
                 }
             }
@@ -627,7 +628,7 @@ pub async fn get_song(
             duration.unwrap_or(0),
             size.unwrap_or(0),
             format_str,
-            bitrate.unwrap_or(320000) / 1000,
+            bitrate.unwrap_or(320), // stored as kbps by lofty
             mime_guess::from_path(format_str).first_or_octet_stream().to_string()
         );
         (StatusCode::OK, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
@@ -647,7 +648,8 @@ pub async fn stream(
     };
 
     let song_id_str = match &params.id {
-        Some(id) if id.starts_with("tr_") => &id[3..],
+        Some(id) if id.starts_with("tr_") => id[3..].to_string(),
+        Some(id) if !id.is_empty() => id.clone(),
         _ => return subsonic_error(f, ERROR_MISSING_PARAM, "Missing track parameter 'id'"),
     };
 
@@ -691,7 +693,8 @@ pub async fn scrobble(
     };
 
     let song_id_str = match &params.id {
-        Some(id) if id.starts_with("tr_") => &id[3..],
+        Some(id) if id.starts_with("tr_") => id[3..].to_string(),
+        Some(id) if !id.is_empty() => id.clone(),
         _ => return subsonic_error(f, ERROR_MISSING_PARAM, "Missing track parameter 'id'"),
     };
 
@@ -756,9 +759,9 @@ pub async fn scrobble_to_listenbrainz(
     .await?
     .ok_or("Track not found")?;
 
-    let title: String = track.get("title");
-    let artist: String = track.get("artist");
-    let album: String = track.get("album");
+    let title: String = track.try_get("title").unwrap_or_default();
+    let artist: String = track.try_get("artist").unwrap_or_default();
+    let album: String = track.try_get("album").unwrap_or_default();
 
     let client = reqwest::Client::new();
     let body = serde_json::json!({
