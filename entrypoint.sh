@@ -26,6 +26,10 @@ if [ "$PUID" != "10001" ] || [ "$PGID" != "10001" ]; then
     chown -R audion:audion /data /app
 fi
 
+# Ensure data subdirectories exist with correct ownership
+mkdir -p /data/db /data/tracks /data/artwork
+chown -R audion:audion /data
+
 # Start backend as audion user in background
 echo "Launching audion-server as non-root user (background)..."
 gosu audion /app/audion-server &
