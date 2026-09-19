@@ -831,7 +831,10 @@
         <div class="brand-logo">
           <Music size={16} aria-hidden="true" />
         </div>
-        <span class="brand-name">Audion</span>
+        <div style="display: flex; flex-direction: column;">
+          <span class="brand-name">Audion</span>
+          <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: 500; margin-top: -2px;">v{__APP_VERSION__}</span>
+        </div>
       </div>
 
       <nav class="nav-links">
