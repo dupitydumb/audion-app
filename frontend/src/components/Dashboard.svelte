@@ -13,7 +13,6 @@
     total_albums: number;
     total_artists: number;
     total_size_bytes: number;
-    data_dir: string;
   } | null>(null);
 
   let isLoading = $state(true);
@@ -43,15 +42,6 @@
     const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  }
-
-  async function copyDataDir(path: string) {
-    try {
-      await navigator.clipboard.writeText(path);
-      addToast('Data directory copied', 'success');
-    } catch (err: any) {
-      addToast('Copy failed. Please copy manually.', 'error');
-    }
   }
 
   onMount(() => {
@@ -171,18 +161,6 @@
 
   <div class="glass-card" style="margin-top: 1.5rem; font-size: 0.85rem; color: var(--text-secondary);">
     <div class="data-dir-row">
-      <div class="data-dir-group">
-        <span style="font-weight: 600;">Data Directory:</span>
-        <code class="data-dir-code" title={stats.data_dir}>{stats.data_dir}</code>
-        <button
-          onclick={() => stats && copyDataDir(stats.data_dir)}
-          class="btn btn-secondary"
-          style="padding: 0.35rem 0.6rem; font-size: 0.75rem;"
-          aria-label="Copy data directory"
-        >
-          Copy
-        </button>
-      </div>
       <button onclick={fetchStats} class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;">
         <RefreshCw size={12} style="margin-right: 0.25rem;" /> Refresh Stats
       </button>
