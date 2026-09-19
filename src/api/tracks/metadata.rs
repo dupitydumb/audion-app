@@ -5,9 +5,69 @@ pub struct UpdateMetadataRequest {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub composer: Option<String>,
+    pub year: Option<String>,
     pub genre: Option<String>,
     pub track_number: Option<i32>,
     pub disc_number: Option<i32>,
+    pub comment: Option<String>,
+    pub bpm: Option<i32>,
+    pub isrc: Option<String>,
+    pub lyrics: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct BulkMetadataUpdateRequest {
+    pub track_ids: Vec<i64>,
+    pub metadata: UpdateMetadataRequest,
+}
+
+pub async fn bulk_update_metadata(
+    claims: Claims,
+    State(state): State<AppState>,
+    Json(payload): Json<BulkMetadataUpdateRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
+    let user_pool = state.get_user_pool(&claims.sub).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let total = payload.track_ids.len();
+    for (idx, id) in payload.track_ids.iter().copied().enumerate() {
+        let req = UpdateMetadataRequest {
+            title: payload.metadata.title.clone(),
+            artist: payload.metadata.artist.clone(),
+            album: payload.metadata.album.clone(),
+            album_artist: payload.metadata.album_artist.clone(),
+            composer: payload.metadata.composer.clone(),
+            year: payload.metadata.year.clone(),
+            genre: payload.metadata.genre.clone(),
+            track_number: payload.metadata.track_number,
+            disc_number: payload.metadata.disc_number,
+            comment: payload.metadata.comment.clone(),
+            bpm: payload.metadata.bpm,
+            isrc: payload.metadata.isrc.clone(),
+            lyrics: payload.metadata.lyrics.clone(),
+        };
+
+        let _ = update_track_metadata(claims.clone(), State(state.clone()), Path(id), Json(req)).await;
+
+        let progress_payload = serde_json::json!({
+            "action": "bulk_update",
+            "current": idx + 1,
+            "total": total,
+            "track_id": id,
+        });
+        broadcast_bulk_event(&state, &user_pool, "bulk.progress", progress_payload).await;
+    }
+
+    let completed_payload = serde_json::json!({
+        "action": "bulk_update",
+        "total": total,
+    });
+    broadcast_bulk_event(&state, &user_pool, "bulk.completed", completed_payload).await;
+
+    Ok(StatusCode::OK)
 }
 
 #[derive(Deserialize)]
@@ -26,12 +86,12 @@ pub struct BulkDeleteRequest {
     pub track_ids: Vec<i64>,
 }
 
-pub async fn update_track_metadata(
-    claims: Claims,
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Json(payload): Json<UpdateMetadataRequest>,
-) -> Result<Json<TrackResponse>, (StatusCode, String)> {
+pub async fn update_track_metadata_inner(
+    state: &AppState,
+    claims: &Claims,
+    id: i64,
+    payload: UpdateMetadataRequest,
+) -> Result<TrackResponse, (StatusCode, String)> {
     claims.require_non_stream_only().map_err(|(s, m)| (s, m.to_string()))?;
     let user_pool = state.get_user_pool(&claims.sub).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -92,6 +152,15 @@ pub async fn update_track_metadata(
     if let Some(ref al) = payload.album {
         metadata_map.insert("AlbumTitle".to_string(), serde_json::Value::String(al.clone()));
     }
+    if let Some(ref aa) = payload.album_artist {
+        metadata_map.insert("AlbumArtist".to_string(), serde_json::Value::String(aa.clone()));
+    }
+    if let Some(ref c) = payload.composer {
+        metadata_map.insert("Composer".to_string(), serde_json::Value::String(c.clone()));
+    }
+    if let Some(ref y) = payload.year {
+        metadata_map.insert("Year".to_string(), serde_json::Value::String(y.clone()));
+    }
     if let Some(ref g) = payload.genre {
         metadata_map.insert("Genre".to_string(), serde_json::Value::String(g.clone()));
     }
@@ -100,6 +169,18 @@ pub async fn update_track_metadata(
     }
     if let Some(ds) = payload.disc_number {
         metadata_map.insert("DiscNumber".to_string(), serde_json::Value::String(ds.to_string()));
+    }
+    if let Some(ref cm) = payload.comment {
+        metadata_map.insert("Comment".to_string(), serde_json::Value::String(cm.clone()));
+    }
+    if let Some(bpm) = payload.bpm {
+        metadata_map.insert("Bpm".to_string(), serde_json::Value::String(bpm.to_string()));
+    }
+    if let Some(ref i) = payload.isrc {
+        metadata_map.insert("Isrc".to_string(), serde_json::Value::String(i.clone()));
+    }
+    if let Some(ref l) = payload.lyrics {
+        metadata_map.insert("Lyrics".to_string(), serde_json::Value::String(l.clone()));
     }
 
     let new_metadata_json = if metadata_map.is_empty() {
@@ -111,7 +192,8 @@ pub async fn update_track_metadata(
     // Update database row
     sqlx::query(
         "UPDATE tracks
-         SET title = ?, artist = ?, album = ?, album_id = ?, genre = ?, track_number = ?, disc_number = ?, metadata_json = ?
+         SET title = ?, artist = ?, album = ?, album_id = ?, genre = ?, track_number = ?, disc_number = ?,
+             album_artist = ?, composer = ?, year = ?, comment = ?, bpm = ?, isrc = ?, lyrics = ?, metadata_json = ?
          WHERE id = ?"
     )
     .bind(&payload.title)
@@ -121,6 +203,13 @@ pub async fn update_track_metadata(
     .bind(&payload.genre)
     .bind(payload.track_number)
     .bind(payload.disc_number)
+    .bind(&payload.album_artist)
+    .bind(&payload.composer)
+    .bind(&payload.year)
+    .bind(&payload.comment)
+    .bind(payload.bpm)
+    .bind(&payload.isrc)
+    .bind(&payload.lyrics)
     .bind(new_metadata_json)
     .bind(id)
     .execute(&user_pool)
@@ -164,15 +253,22 @@ pub async fn update_track_metadata(
     let payload_title = payload.title.clone();
     let payload_artist = payload.artist.clone();
     let payload_album = payload.album.clone();
+    let payload_album_artist = payload.album_artist.clone();
+    let payload_composer = payload.composer.clone();
+    let payload_year = payload.year.clone();
     let payload_genre = payload.genre.clone();
     let payload_track_number = payload.track_number;
     let payload_disc_number = payload.disc_number;
+    let payload_comment = payload.comment.clone();
+    let payload_bpm = payload.bpm;
+    let payload_isrc = payload.isrc.clone();
+    let payload_lyrics = payload.lyrics.clone();
 
     tokio::task::spawn_blocking(move || {
         if full_path.exists() {
             use lofty::prelude::*;
             if let Ok(mut tagged_file) = lofty::probe::Probe::open(&full_path)
-                .and_then(|p| p.options(lofty::config::ParseOptions::new().parsing_mode(lofty::config::ParsingMode::Relaxed)).read()) 
+                .and_then(|p| p.options(lofty::config::ParseOptions::new().parsing_mode(lofty::config::ParsingMode::Relaxed)).read())
             {
                 let tag = if tagged_file.primary_tag().is_some() {
                     tagged_file.primary_tag_mut()
@@ -189,6 +285,15 @@ pub async fn update_track_metadata(
                     if let Some(al) = payload_album {
                         tag.insert_text(lofty::tag::ItemKey::AlbumTitle, al);
                     }
+                    if let Some(aa) = payload_album_artist {
+                        tag.insert_text(lofty::tag::ItemKey::AlbumArtist, aa);
+                    }
+                    if let Some(c) = payload_composer {
+                        tag.insert_text(lofty::tag::ItemKey::Composer, c);
+                    }
+                    if let Some(y) = payload_year {
+                        tag.insert_text(lofty::tag::ItemKey::Year, y);
+                    }
                     if let Some(g) = payload_genre {
                         tag.insert_text(lofty::tag::ItemKey::Genre, g);
                     }
@@ -198,6 +303,18 @@ pub async fn update_track_metadata(
                     if let Some(ds) = payload_disc_number {
                         tag.insert_text(lofty::tag::ItemKey::DiscNumber, ds.to_string());
                     }
+                    if let Some(cm) = payload_comment {
+                        tag.insert_text(lofty::tag::ItemKey::Comment, cm);
+                    }
+                    if let Some(b) = payload_bpm {
+                        tag.insert_text(lofty::tag::ItemKey::Bpm, b.to_string());
+                    }
+                    if let Some(i) = payload_isrc {
+                        tag.insert_text(lofty::tag::ItemKey::Isrc, i);
+                    }
+                    if let Some(l) = payload_lyrics {
+                        tag.insert_text(lofty::tag::ItemKey::Lyrics, l);
+                    }
                     let _ = tag.save_to_path(&full_path, lofty::config::WriteOptions::default());
                 }
             }
@@ -206,9 +323,9 @@ pub async fn update_track_metadata(
 
     // Fetch the updated track
     let track = sqlx::query_as::<_, TrackResponse>(
-        "SELECT id, path, title, artist, album, track_number, disc_number, duration,
+        "SELECT id, path, title, artist, album, album_artist, composer, year, track_number, disc_number, duration,
                 album_id, format, bitrate, source_type, cover_url, external_id,
-                local_src, track_cover_path, genre, metadata_json, date_added
+                local_src, track_cover_path, genre, comment, bpm, isrc, lyrics, metadata_json, date_added
          FROM tracks
          WHERE id = ?"
     )
@@ -237,6 +354,16 @@ pub async fn update_track_metadata(
         });
     }
 
+    Ok(track)
+}
+
+pub async fn update_track_metadata(
+    claims: Claims,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(payload): Json<UpdateMetadataRequest>,
+) -> Result<Json<TrackResponse>, (StatusCode, String)> {
+    let track = update_track_metadata_inner(&state, &claims, id, payload).await?;
     Ok(Json(track))
 }
 
@@ -503,9 +630,9 @@ pub async fn fetch_track_metadata_inner(
 
     // Get the updated track
     let track = sqlx::query_as::<_, TrackResponse>(
-        "SELECT id, path, title, artist, album, track_number, disc_number, duration,
+        "SELECT id, path, title, artist, album, album_artist, composer, year, track_number, disc_number, duration,
                 album_id, format, bitrate, source_type, cover_url, external_id,
-                local_src, track_cover_path, genre, metadata_json, date_added
+                local_src, track_cover_path, genre, comment, bpm, isrc, lyrics, metadata_json, date_added
          FROM tracks
          WHERE id = ?"
     )

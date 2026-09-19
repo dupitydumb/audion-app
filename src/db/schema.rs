@@ -31,6 +31,19 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let _ = sqlx::query("ALTER TABLE users ADD COLUMN storage_quota_bytes INTEGER DEFAULT NULL").execute(pool).await;
     let _ = sqlx::query("ALTER TABLE users ADD COLUMN can_upload INTEGER DEFAULT 1").execute(pool).await;
 
+    // Alter tracks table for new metadata fields
+    let _ = sqlx::query("ALTER TABLE tracks ADD COLUMN album_artist TEXT").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE tracks ADD COLUMN composer TEXT").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE tracks ADD COLUMN year TEXT").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE tracks ADD COLUMN comment TEXT").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE tracks ADD COLUMN bpm INTEGER").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE tracks ADD COLUMN isrc TEXT").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE tracks ADD COLUMN lyrics TEXT").execute(pool).await;
+
+    // Alter albums table for new metadata fields
+    let _ = sqlx::query("ALTER TABLE albums ADD COLUMN album_artist TEXT").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE albums ADD COLUMN year TEXT").execute(pool).await;
+
     // Create albums table (matching client)
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS albums (

@@ -13,9 +13,9 @@ pub async fn get_tracks(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let tracks = sqlx::query_as::<_, TrackResponse>(
-        "SELECT id, path, title, artist, album, track_number, disc_number, duration,
+        "SELECT id, path, title, artist, album, album_artist, composer, year, track_number, disc_number, duration,
                 album_id, format, bitrate, source_type, cover_url, external_id,
-                local_src, track_cover_path, genre, metadata_json, date_added
+                local_src, track_cover_path, genre, comment, bpm, isrc, lyrics, metadata_json, date_added
          FROM tracks
          ORDER BY artist, album, disc_number, track_number, title
          LIMIT ? OFFSET ?"
@@ -38,9 +38,9 @@ pub async fn get_track_by_id(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let track = sqlx::query_as::<_, TrackResponse>(
-        "SELECT id, path, title, artist, album, track_number, disc_number, duration,
+        "SELECT id, path, title, artist, album, album_artist, composer, year, track_number, disc_number, duration,
                 album_id, format, bitrate, source_type, cover_url, external_id,
-                local_src, track_cover_path, genre, metadata_json, date_added
+                local_src, track_cover_path, genre, comment, bpm, isrc, lyrics, metadata_json, date_added
          FROM tracks
          WHERE id = ?"
     )

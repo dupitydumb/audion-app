@@ -20,7 +20,7 @@ pub mod query;
 pub mod lyrics;
 
 pub use upload::upload_track;
-pub use metadata::{update_track_metadata, fetch_track_metadata, bulk_fetch_metadata, UpdateMetadataRequest, bulk_delete_tracks};
+pub use metadata::{update_track_metadata, fetch_track_metadata, bulk_fetch_metadata, bulk_update_metadata, UpdateMetadataRequest, BulkMetadataUpdateRequest, bulk_delete_tracks};
 pub use query::{get_tracks, get_track_by_id, delete_track, delete_track_inner};
 pub use lyrics::get_track_lyrics;
 
@@ -31,6 +31,9 @@ pub struct TrackResponse {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub composer: Option<String>,
+    pub year: Option<String>,
     pub track_number: Option<i32>,
     pub disc_number: Option<i32>,
     pub duration: Option<i32>,
@@ -43,6 +46,10 @@ pub struct TrackResponse {
     pub local_src: Option<String>,
     pub track_cover_path: Option<String>,
     pub genre: Option<String>,
+    pub comment: Option<String>,
+    pub bpm: Option<i32>,
+    pub isrc: Option<String>,
+    pub lyrics: Option<String>,
     pub metadata_json: Option<String>,
     pub date_added: Option<String>,
 }
