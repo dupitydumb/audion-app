@@ -30,10 +30,16 @@ fi
 echo "Launching audion-server as non-root user (background)..."
 gosu audion /app/audion-server &
 
-# Wait for backend to bind before nginx starts proxying
+# Wait for backend to bind before nginx starts proxying (max 30s)
 echo "Waiting for backend to be ready..."
+WAIT=0
 until curl -sf http://127.0.0.1:8080/api/health > /dev/null 2>&1; do
+    if [ "$WAIT" -ge 30 ]; then
+        echo "ERROR: backend did not start within 30s" >&2
+        exit 1
+    fi
     sleep 1
+    WAIT=$((WAIT + 1))
 done
 echo "Backend ready."
 

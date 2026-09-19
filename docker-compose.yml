@@ -1,11 +1,11 @@
 
 services:
-  audion-server:
+  audion:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"
+      - "80:80"
     volumes:
       - ./data:/data
     env_file: .env
@@ -18,21 +18,4 @@ services:
       - AUDION_MAX_BODY_SIZE=262144000
       - PUID=10001
       - PGID=10001
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
-
-  audion-frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    ports:
-      - "80:80"
-    depends_on:
-      audion-server:
-        condition: service_healthy
     restart: unless-stopped
