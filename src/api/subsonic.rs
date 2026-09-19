@@ -1061,10 +1061,10 @@ pub async fn get_artists(
         let artists_xml: String = artists.iter().map(|a| {
             format!(r#"<artist id="ar_{}" name="{}" albumCount="0"/>"#, escape_xml(a), escape_xml(a))
         }).collect();
-        let body = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+        let body = format!(r##"<?xml version="1.0" encoding="UTF-8"?>
 <subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1">
   <artists><index name="#">{}</index></artists>
-</subsonic-response>"#, artists_xml);
+</subsonic-response>"##, artists_xml);
         (StatusCode::OK, [(header::CONTENT_TYPE, "application/xml; charset=utf-8")], body).into_response()
     }
 }
