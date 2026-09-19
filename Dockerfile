@@ -94,4 +94,7 @@ RUN mkdir -p /data && chown -R audion:audion /app /data
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# Install nginx site config (replaces default)
+COPY nginx.conf /etc/nginx/sites-available/default
+
 ENTRYPOINT ["/app/entrypoint.sh"]
