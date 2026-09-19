@@ -104,6 +104,12 @@ pub async fn update_storage_settings(
             Some(s) => s.to_string(),
         };
 
+        if access_key.trim().is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "S3 access key is required".to_string()));
+        }
+        if secret_key.trim().is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "S3 secret key is required".to_string()));
+        }
         if bucket.trim().is_empty() {
             return Err((StatusCode::BAD_REQUEST, "Bucket name cannot be empty".to_string()));
         }
@@ -120,28 +126,28 @@ pub async fn update_storage_settings(
             force_path_style,
         ).map_err(|e| (StatusCode::BAD_REQUEST, format!("Failed to create S3 client configuration: {}", e)))?;
 
-        // Perform dummy write/delete
-        let test_key = "audion_connection_test.txt";
-        let body = aws_sdk_s3::primitives::ByteStream::from(b"test".to_vec());
-        
-        client.put_object()
+        // head_bucket: read-only probe, works for R2/MinIO/B2/GCS without writing data.
+        // 403 means credentials are wrong but network/bucket is reachable.
+        // 404 means bucket does not exist. Any other error is a connectivity/config issue.
+        client.head_bucket()
             .bucket(&bucket)
-            .key(test_key)
-            .content_type("text/plain")
-            .body(body)
             .send()
             .await
             .map_err(|e| {
-                error!("S3 test connection put failed: {:?}", e);
-                (StatusCode::BAD_REQUEST, format!("S3 connection test failed (Write): {:?}", e))
+                let svc_err = e.into_service_error();
+                let code = svc_err.meta().code().unwrap_or("");
+                let msg = match code {
+                    "403" | "AccessDenied" => {
+                        "S3 connection failed: bucket reachable but credentials are invalid (403 Forbidden)".to_string()
+                    }
+                    "404" | "NoSuchBucket" => {
+                        format!("S3 connection failed: bucket '{}' does not exist (404)", bucket)
+                    }
+                    _ => format!("S3 connection failed: {}", svc_err),
+                };
+                error!("S3 test connection head_bucket failed: {}", msg);
+                (StatusCode::BAD_REQUEST, msg)
             })?;
-
-        // Cleanup dummy object
-        let _ = client.delete_object()
-            .bucket(&bucket)
-            .key(test_key)
-            .send()
-            .await;
 
         info!("S3 storage connection test succeeded.");
     }

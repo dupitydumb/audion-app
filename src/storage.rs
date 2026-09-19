@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 use aws_sdk_s3::Client;
+use aws_sdk_s3::config::BehaviorVersion;
 use aws_sdk_s3::config::Credentials;
 use aws_sdk_s3::config::Region;
 use aws_sdk_s3::presigning::PresigningConfig;
@@ -135,7 +136,9 @@ pub fn build_s3_client(
 
     let mut config_builder = aws_sdk_s3::config::Builder::new()
         .credentials_provider(credentials)
-        .region(Region::new(region.to_string()));
+        .region(Region::new(region.to_string()))
+        .behavior_version(BehaviorVersion::latest());
+        // ponytail: no per-operation timeout; add via aws_smithy_types::timeout::TimeoutConfig when adding aws-smithy-types as direct dep
 
     if !endpoint.trim().is_empty() {
         config_builder = config_builder.endpoint_url(endpoint.trim());
